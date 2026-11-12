@@ -174,7 +174,6 @@ class CandidateFinder:
         creates = self._session_bound_creates(info)
         if not writes and not creates:
             return []
-        confirmed = set()
         body = list(self.p.walk_function_body(info.node))
         local: dict = {}
         for n in body:
@@ -185,7 +184,6 @@ class CandidateFinder:
         rekey = any(isinstance(n, ast.Call) and (
             (isinstance(n.func, ast.Attribute) and n.func.attr in REKEY_LEAVES and
              self.cred.is_session_expr(n.func.value, info)) or _leaf(n.func) == "rotate_token") for n in body)
-        _sess, stores = self.cred.session_aliases(info)
         fresh = set()
         for n in body:
             if isinstance(n, ast.Assign) and len(n.targets) == 1 and isinstance(n.targets[0], ast.Name) and \
@@ -199,8 +197,6 @@ class CandidateFinder:
              n.value.id == x) for n in body)}
         hits = []      # (rank, statement, key text, signals)
         for st, kexpr, vexpr in writes:
-            if id(st) in confirmed:
-                continue
             pats = self.cred.key_patterns(kexpr, info)
             kws = _key_words(kexpr, pats)
             auth = kws & AUTH_STATE_WORDS
