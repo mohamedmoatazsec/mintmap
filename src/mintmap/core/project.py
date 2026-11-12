@@ -277,6 +277,12 @@ class Project:
                     hit = None
                     for c in index.get(sub[-1], ()):
                         if len(c) >= k and c[len(c) - k:] == sub and here[:len(c) - k] == c[:len(c) - k]:
+                            # (v6) the project directory is on sys.path: a ref that resolves from it
+                            # (`machine.machine_types` with a top-level machine/) is not evidence for a deeper
+                            # root that happens to hold a package of the same name (plugin/machine/)
+                            if len(c) == k:
+                                hit = c
+                                break
                             if hit is None or len(c) > len(hit):
                                 hit = c
                     if hit is not None:
@@ -405,6 +411,8 @@ class Project:
         parts = dotted.split(".")
         for i in range(len(parts), 0, -1):
             m = ".".join(parts[:i])
+            if m in self.modules:
+                return dotted     # (v6) a real module of that name wins over an alias of another module
             if m in self.module_aliases:
                 return ".".join([self.module_aliases[m]] + parts[i:])
         return dotted

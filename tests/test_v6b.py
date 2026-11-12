@@ -18,6 +18,9 @@ written for these tests; no development-project code is copied.
     RouterAliasTests           `api_urls = router.urls` in one module included as `mod.api_urls` from another is
                                the router's routes (was an unattached unsupported_url_construct gap); an instance of
                                a project class with __call__ used as a view is routed to its __call__
+    SameNamePackageTests       a package that holds a module of its own name (`plugin/plugin.py`) and a sub-package
+                               named like a top-level one (`plugin/machine/` next to `machine/`) keeps its imports
+                               (`from plugin.base.x import urls`) absolute
 """
 import json
 import unittest
@@ -480,6 +483,52 @@ class RouterAliasTests(unittest.TestCase):
         c = [c for c in rep["candidates"] if c["candidate"]["group"] == "request_authenticator"]
         self.assertEqual([x["entry"]["reached_from"] for x in c],
                          [["route:calendar.ics|club.feeds.CalendarFeed.__call__"]])
+
+
+# ============================================================================ same-name packages
+class SameNamePackageTests(unittest.TestCase):
+    def test_absolute_imports_inside_a_package_with_a_same_name_module(self):
+        files = {
+            "conf/urls.py": """\
+                from django.urls import include, path
+                urlpatterns = [path("api/plugin/", include("plugin.api"))]
+            """,
+            "machine/__init__.py": "",
+            "machine/machine_types.py": "KINDS = ['printer']\n",
+            "plugin/__init__.py": "",
+            "plugin/plugin.py": "class BasePlugin:\n    pass\n",
+            "plugin/machine/__init__.py": "",
+            "plugin/machine/machine_types.py": "from machine.machine_types import KINDS\n",
+            "plugin/base/__init__.py": "",
+            "plugin/base/keys.py": """\
+                import secrets
+
+                from django.http import JsonResponse
+                from django.urls import path
+
+
+                def issue_key(request):
+                    request.user.profile.api_key = secrets.token_hex(20)
+                    request.user.profile.save()
+                    return JsonResponse({"api_key": request.user.profile.api_key})
+
+
+                key_urls = [path("key/", issue_key)]
+            """,
+            "plugin/api.py": """\
+                from django.urls import include, path
+
+                from machine.machine_types import KINDS
+                from plugin.base.keys import key_urls
+
+                urlpatterns = [path("keys/", include(key_urls))]
+            """,
+        }
+        rep = scan(project(self, files, init=("conf",)))
+        self.assertFalse([g for g in rep["coverage"]["gaps"] if g["type"] == "unsupported_url_construct"],
+                         rep["coverage"]["gaps"])
+        self.assertIn("api/plugin/keys/key/", [r["pattern"] for r in rep["routes"]])
+        self.assertEqual(rep["coverage"]["module_aliases"], {})
 
 
 if __name__ == "__main__":
