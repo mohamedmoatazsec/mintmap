@@ -52,7 +52,8 @@ no visible gap and 18 of 58 harmful mutations passed `diff`; v4 had the same sil
 fixes tuned on development projects did not transfer. v6 therefore adds broad structural rules, above all a
 **candidate tier** that makes new shapes visible and diffable at low review cost, plus false-alarm reductions. Those
 three projects are now development projects; the evaluation of v6 needs fresh ones. Every rule has a synthetic
-fixture test (`tests/test_v6.py`, 30 tests; `tests/test_v6b.py`, 19 tests; no project code copied).
+fixture test (`tests/test_v6.py`, 30 tests; `tests/test_v6b.py`, 19 tests; `tests/test_v6c.py`, 22 tests for the second
+part, v6b, below; no project code copied).
 
 **Harness (A0).** `run_all.py` / `units.json` cover all eight development projects: the saved mutations of InvenTree,
 Weblate and pretix with their labels, the verifiers' own probes (InvenTree v1-v6, Weblate v1, pretix y1-y3) and 149
@@ -166,6 +167,100 @@ InvenTree, pretix). These recall and mutation gains were obtained on the project
 * Not done: completing the catalog for allauth headless and django-oauth-toolkit URLconfs (several units are still
   `library_include_mints_incomplete` gaps); a signed value carrying only the signed-in user's id is still a confirmed
   mint (it can be a session hand-off or an OAuth-like state).
+
+### v6, second part (v6b): precision, change detection and review cost
+
+Same development set and harness; synthetic fixture tests in `tests/test_v6c.py` (22 tests, no project code).
+
+**Change detection (refactor false alarms).** The four harmless changes that still raised a finding in `v6a`
+were three extract-method / extract-helper refactors and a log-call edit in the check closure of a false-alarm path.
+* `refactor.Inliner` also inlines *extract method*: `self.h(...)` called by a method of class `C`, where `h` is a
+  plain method of the same class (no decorator, not rebound in the class body, not overridden by any project
+  subclass, the caller never rebinds its receiver). A private method inlined at every reference in the project is
+  left out of the class dump and of a library flow's callee roots; a public one stays (a library may call it by name).
+* Arguments that are attribute chains on a name (`request.META`, `self.request.headers`) are substituted when the
+  helper assigns or deletes none of the chain's attributes.
+* The log-call edit sat in the check closure of an audit correlation id reported as a custom credential; that path
+  is gone (below), and with it the finding.
+
+**False alarms (general rules).**
+* *Start-up-only mints* are a candidate kind `startup_only` (rank low): a mint site that only `AppConfig.ready()`,
+  import-time calls (a settings module calling a key generator), a management command's `handle()` or a function
+  that only migrations name reaches is not a request path. Still traced, fingerprinted and diffed.
+* *Session values that load something other than a principal*: a key read back as `pk=` / `id=` of a project model
+  that is not principal-like (not the user model, not named after a user / customer / member / account, keeps no
+  password) and is not attached to the request (`request.x = ...`) is flow state (an event, a payment, a workspace);
+  `get_object_or_404(M, pk=...)` is read too. Listed in `coverage.custom_credentials.session_lookups_set_aside`.
+* *Signed values read back*: a `signing.dumps` / `Signer.sign` value that looked like a credential is set aside when
+  every project function that reads it back with the same salt (`signing.loads` / `unsign`), its callers, and what
+  they call two levels down neither log anyone in, set a password nor call a catalogued mint (confirmation payloads,
+  OAuth-like state, redirect proofs). A hand-off link whose reader logs the user in stays a mint; making a reader
+  log in is a new path.
+* *Custom-credential heuristic*: a callable keeps a credential only when its name has a credential noun (an action
+  word such as `reset()`, e.g. `ContextVar.reset(token)`, does not); a predicate (`check_*`, `verify_*`,
+  `validate_*`, `is_*` ...) consumes a value rather than keeps it; an integration word (`webhook`, `callback`,
+  `integration` ...) in the kept name vetoes even a strong head noun (`webhook_token`); `session` no longer
+  qualifies itself as a weak word (`_session_wizard_prefix`).
+* `testutils/` and `test_utils/` packages are test code (re-included when non-test code imports them).
+
+**Review cost.** Every confirmed path carries a `review` block: its group (credential kind `kind:session`,
+`kind:token`, `kind:precursor`, `kind:custom`, `kind:other`), a risk (high / medium / low from a transparent score:
+kind, check evidence, reachability, confidence) and the reasons; candidate sites carry their kind and rank. The text
+report starts with this review queue (kinds, then entry points, highest risk first, one `why` line per entry,
+candidate groups, settings groups) and lists the path evidence in the same order. `mintmap accept --group <group>`
+accepts one group. Lock format: path entries gain the informational `review` block, which `diff` ignores; locks
+written by 0.5.0a1 / v6a stay valid (for them `accept --group` derives the group from the purpose) and
+`mintmap update` adds the block.
+
+**Before / after** (regression harness `v5r` -> `v6a` -> `v6b` = this tree, snapshot 553190a, 1270.9 s). Lock
+entries = path entries + settings entries + candidate groups (candidate sites). FA = adjudicated false alarms still
+reported (any tier) / reported items nobody adjudicated; precision = share of reported items (paths + candidate
+sites) that are not adjudicated false alarms, as a range (unadjudicated items counted as false alarms ... as real).
+
+| project | run | lock entries | harmful caught | harmless flagged | FA known / unadj. | precision, all items | precision, confirmed paths |
+|---|---|---|---|---|---|---|---|
+| InvenTree | v5r | 36 + 10 | 14/19 | 2/10 | 17 / 0 | 53% | 53% |
+| | v6a | 30 + 10 + 2 (7) | 19/19 | 2/10 | 5 / 8 | 65-86% | 73-83% |
+| | v6b | 25 + 10 + 3 (10) | 19/19 | **0/10** | 4 / 7 (3 of the 4 are low-ranked `startup_only` candidates) | 69-89% | 88-96% |
+| Weblate | v5r | 103 + 11 | 13/21 | 1/5 | 61 / 0 | 41% | 41% |
+| | v6a | 50 + 11 + 3 (13) | 21/21 | 1/5 | 19 / 16 | 44-70% | 46-62% |
+| | v6b | 37 + 11 + 4 (15) | 21/21 | **0/5** | 8 / 16 | 54-85% | 59-78% |
+| pretix | v5r | 91 + 9 | 13/18 | 1/5 | 49 / 0 | 46% | 46% |
+| | v6a | 88 + 9 + 3 (17) | 18/18 | 1/5 | 28 / 17 | 57-73% | 59-68% |
+| | v6b | 81 + 9 + 3 (17) | 18/18 | **0/5** | 21 / 17 | 61-79% | 64-74% |
+| paperless-ngx | v6a / v6b | 34 + 7 + 3 (8) | 12/12 | 0/3 | 4 / 18 | 48-90% | 59-88% |
+| netbox | v6a | 9 + 9 + 3 (8) | 11/11 | 0/3 | 0 / 8 | 53-100% | 67-100% |
+| | v6b | 8 + 9 + 4 (9) | 11/11 | 0/3 | 0 / 8 | 53-100% | 75-100% |
+| plane | v6a / v6b | 35 + 7 + 2 (8) | 11/11 (+4 follow-ups) | 0/6 | 3 / 14 | 60-93% | 74-91% |
+| Healthchecks | v6a / v6b | 27 + 6 + 1 (2) | 6/6 | 0/3 | - | - | - |
+| Zulip (scan only) | v6a | 103 + 10 + 1 (2) | - | - | - | - | - |
+| | v6b | 97 + 10 + 2 (8) | - | - | - | - | - |
+
+Totals: harmful mutations caught 98/98 in `v6a` and `v6b` (v5r 80/98); harmless changes flagged 4/35 -> **0/35**.
+Recall (213 units) unchanged from `v6a`: exact 162, mint only 23, gap 24, silent 4; no adjudicated real path was
+lost (real paths still reported 15 / 20 / 42 on InvenTree / Weblate / pretix in both runs). On the round-3 projects
+reported items 230 (v5r) -> 205 (v6a) -> 185 (v6b): adjudicated false alarms 127 -> 52 -> 33, unadjudicated
+0 -> 41 -> 40; precision 45% -> 55-75% -> 61-82% (confirmed paths only: 45% -> 58-69% -> 67-79%). Day-one lock
+entries 260 -> 206 -> 183. Scan times unchanged within noise (Weblate 31.4 -> 33.3 s, netbox 17.2 -> 20.1 s).
+Every unmodified diff exits 0; locks written with Python 3.11 and 3.13 are identical apart from the `tool` block
+(Healthchecks, pretix).
+
+### v6b limits
+
+* As for v6a: every number is on development projects; the rules were derived from the adjudications of InvenTree,
+  Weblate and pretix, so only a fresh evaluation can show whether they generalise.
+* Remaining adjudicated false alarms (33): pretix order / position capability secrets created at many sites (11),
+  Weblate `django_otp.login` re-storing a device id through a social-auth completion (4), outbound-integration and
+  server secrets whose names carry no integration word (backup passphrase, Stripe OAuth state, server key pairs),
+  signed download tokens of a project signer class (no comparable salt), a random password nobody receives, and
+  three low-ranked `startup_only` candidates.
+* The candidate tier grew by 5 sites on the round-3 projects (37 -> 42, of them 3 adjudicated false alarms moved
+  there from the confirmed tier); on Zulip 6 confirmed paths became `startup_only` candidates.
+* Extract-method normalisation does not cover public methods of classes that inherit a library flow, helpers in
+  another class or module, or expression arguments other than attribute chains; check evidence is still computed on
+  the code as written (a check moved into a helper can read weaker).
+* The signed-value rule trusts the project's readers: a value read back by a library, by code in another
+  repository, or without a comparable salt keeps the earlier decision.
 
 ## What changed in v5 (review round: 22 findings of two adversarial reviews of part B)
 

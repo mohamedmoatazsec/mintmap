@@ -3444,7 +3444,7 @@ class Analysis:
         if info.parent:
             return ""
         if root in self.import_time_calls():
-            return "called by module-level code at import time"
+            return "called by module-level code (import time, or a script's __main__ block)"
         if not info.node.decorator_list and self._unreferenced_function(root) and \
                 self._migration_refs().get(root.rsplit(".", 1)[-1]):
             return "named only by Django migrations (deploy time)"
