@@ -371,6 +371,12 @@ class CallGraph:
             return self.attr_type(ctx or info.cls, expr.attr)
         if isinstance(expr, ast.Call):
             f = expr.func
+            if isinstance(f, ast.Attribute) and f.attr == "get_model" and expr.args and \
+                    all(isinstance(a, ast.Constant) and isinstance(a.value, str) for a in expr.args[:2]):
+                # (v6c) `apps.get_model("authtoken", "Token")` in a data migration (also "authtoken.Token")
+                label, _, model = (expr.args[0].value + "." + expr.args[1].value if len(expr.args) >= 2
+                                   else expr.args[0].value).rpartition(".")
+                return self.model_by_label(label, model)
             if isinstance(f, ast.Attribute) and isinstance(f.value, ast.Name) and f.value.id == "self" and ctx:
                 if f.attr in ("get_serializer",):
                     return self.class_attr_type(ctx, "serializer_class")
@@ -398,6 +404,22 @@ class CallGraph:
                 if _is_class_like(self.p, q, self.known_classes):
                     return q
             return None
+        return None
+
+    def model_by_label(self, label: str, model: str):
+        """(v6c) The class `apps.get_model(label, model)` returns: a project class `model` in an app whose package
+        ends with `label`, else a catalogued library model `<...>.<label>.models.<model>` (from the catalog's mint
+        symbols); None when unknown."""
+        for cq in self.p.classes:
+            mod, _, name = cq.rpartition(".")
+            if name == model and (mod.split(".")[:-1] or [""])[-1] == label:
+                return cq
+        for sym in self.catalog.mint_calls:
+            i = sym.find(f".{label}.models.{model}.")
+            if i >= 0:
+                return sym[:i] + f".{label}.models.{model}"
+        if label == "auth" and model == "User":
+            return "django.contrib.auth.models.User"
         return None
 
     def manager_classes(self, model: str, attr: str) -> list:
@@ -578,6 +600,22 @@ class CallGraph:
             elif (isinstance(f.value, ast.Attribute) and isinstance(f.value.value, ast.Name) and info.cls
                   and info.params and f.value.value.id == info.params[0] and f.value.value.id in ("self", "cls")):
                 typ = self.attr_type(cls_ctx, f.value.attr)   # self.<attr>.method()
+            elif isinstance(f.value, ast.Attribute) and f.value.attr in ("objects", "_default_manager") and \
+                    isinstance(f.value.value, ast.Name) and types.get(f.value.value.id):
+                # (v6c) `Token.objects.create(...)` with `Token = apps.get_model(...)`
+                mt = types[f.value.value.id]
+                res.receiver_var = f.value.value.id
+                res.via = "typed"
+                if mt in self.p.classes:
+                    for mc in self.manager_classes(mt, f.value.attr):
+                        r = self.p.lookup_method(mc, f.attr)
+                        if r and r[0] == "project":
+                            res.targets.append((r[1], mc))
+                            return res
+                    return res
+                res.library = f"{mt}.{f.value.attr}.{f.attr}"
+                res.library_candidates = self._library_expansions(res.library)
+                return res
             if typ:
                 res.receiver_type = typ
                 res.via = "typed"

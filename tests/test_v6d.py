@@ -12,7 +12,8 @@ written for these tests; no development-project code is copied.
                               sys.modules writes in a settings module keep library flows that a default would switch
                               off
     TestHelperReferenceTests  a test-helper module named by a dotted string (URLconf include(), MIDDLEWARE) is analysed
-    StartupMigrationTests     a mint only a data migration reaches is a `startup_only` candidate, not dropped
+    StartupMigrationTests     a mint only a data migration reaches is a `startup_only` candidate, not dropped (also
+                              through a historical model from apps.get_model())
     DynamicDispatchTests      a generator in a module that code dispatches into with getattr(module, <computed>) is
                               not dead code
     RequestAuthenticatorTests `request.user = ...` without a credential check is a high-ranked candidate; Channels
@@ -390,6 +391,15 @@ class StartupMigrationTests(unittest.TestCase):
             root, "shop/migrations/0002_bot.py", "Token.objects.create(user=bot)",
             'Token.objects.create(user=bot, key="0" * 40)'))
         self.assertTrue(code & 4, findings)
+
+    def test_historical_model_from_apps_get_model(self):
+        mig = MIGRATION.replace("from rest_framework.authtoken.models import Token\n", "").replace(
+            '    User = apps.get_model("auth", "User")\n',
+            '    User = apps.get_model("auth", "User")\n    Token = apps.get_model("authtoken", "Token")\n')
+        root = project(self, {"conf/urls.py": "urlpatterns = []\n", "shop/migrations/__init__.py": "",
+                              "shop/migrations/0002_bot.py": mig})
+        hit = [c for c in cands(scan(root), "startup_only") if "service_account" in c["entry"]["id"]]
+        self.assertEqual([c["mint"]["api"] for c in hit], ["rest_framework.authtoken.models.Token.objects.create"])
 
 
 # ============================================================================ dynamic dispatch
