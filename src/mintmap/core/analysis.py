@@ -2188,7 +2188,8 @@ class Analysis:
                 inl = self.inliner.inlined_calls(fq)
                 for site in self.cg.sites(fq):
                     inline_edge = id(site.node) in inl
-                    for t, tctx in self.cg.resolve(site, ctx).targets:
+                    res = self.cg.resolve(site, ctx)
+                    for t, tctx in res.targets or self.unresolved_method_targets(site, res):
                         node = (t, tctx if tctx else (self.p.functions[t].cls if t in self.p.functions else None))
                         if not inline_edge:
                             hashed.add(t)
@@ -2220,6 +2221,29 @@ class Analysis:
             covered |= self.inliner.inlined_bodies(f)
         self.last_closure_reached = seen
         return hashed, truncated
+
+    NAME_FALLBACK_MAX = 3
+
+    def unresolved_method_targets(self, site, res) -> list:
+        """(v6) Fingerprint-only fallback for `x.m(...)` whose receiver MintMap cannot type (an object from a
+        registry, a parameter): the project methods named `m` when at most NAME_FALLBACK_MAX project classes
+        define one and the name is not generic.  They join the callee closure (a change to any of them changes
+        the fingerprint); they are not used to link mints to entry points."""
+        if res.unresolved is None or res.library or not isinstance(site.node, ast.Call) or \
+                not isinstance(site.node.func, ast.Attribute):
+            return []
+        leaf = site.leaf
+        if not leaf or leaf.startswith("__") or leaf in GENERIC_LEAVES:
+            return []
+        idx = self.__dict__.get("_method_index")
+        if idx is None:
+            idx = {}
+            for q, info in self.p.functions.items():
+                if info.cls:
+                    idx.setdefault(q.rsplit(".", 1)[-1], []).append((q, info.cls))
+            self._method_index = idx
+        defs = idx.get(leaf, [])
+        return sorted(defs) if 0 < len(defs) <= self.NAME_FALLBACK_MAX else []
 
     # ------------------------------------------------------------------ (v5 review) dependency versions
     def version_gaps(self) -> dict:

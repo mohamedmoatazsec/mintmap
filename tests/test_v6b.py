@@ -25,6 +25,8 @@ written for these tests; no development-project code is copied.
                                lookup in a getter is on the path, and changing it changes the fingerprint
     FormMappingTests           a view that picks its form from a class-level dict (`forms = {"totp": TotpForm}`)
                                runs every form of the dict: their methods are fingerprinted
+    RegistryCallTests          `self.backend.verify_login(...)` on an object from a registry: the (few) project
+                               methods of that name are in the fingerprint
 """
 import json
 import unittest
@@ -647,6 +649,62 @@ class FormMappingTests(unittest.TestCase):
         findings, code = run_diff(self, root, lambda: replace_in(
             root, "club/step.py", "        if self.cleaned_data[\"code\"] not in self.user.profile.backup_codes:\n"
                                   "            raise forms.ValidationError(\"wrong code\")\n", ""))
+        self.assertTrue(code & 4, findings)
+
+
+# ============================================================================ calls on objects from a registry
+REGISTRY_FILES = {
+    "club/backends.py": """\
+        from django.contrib.auth import get_user_model
+
+
+        class LocalBackend:
+            def verify_login(self, request, data):
+                user = get_user_model().objects.filter(email=data["email"]).first()
+                if user is not None and user.check_password(data["password"]):
+                    return user
+                return None
+
+
+        class DirectoryBackend:
+            def verify_login(self, request, data):
+                return None
+
+
+        def get_backends():
+            from django.conf import settings
+            from django.utils.module_loading import import_string
+            return [import_string(b)() for b in settings.LOGIN_BACKENDS]
+    """,
+    "club/views.py": """\
+        from django.contrib.auth import login
+        from django.http import HttpResponse
+
+        from club.backends import get_backends
+
+
+        def sign_in(request):
+            backend = get_backends()[int(request.POST.get("b", 0))]
+            user = backend.verify_login(request, request.POST)
+            if user is None:
+                return HttpResponse(status=403)
+            login(request, user)
+            return HttpResponse("ok")
+    """,
+    "conf/urls.py": """\
+        from django.urls import path
+        from club.views import sign_in
+        urlpatterns = [path("signin/", sign_in)]
+    """,
+}
+
+
+class RegistryCallTests(unittest.TestCase):
+    def test_methods_of_that_name_are_fingerprinted(self):
+        root = project(self, REGISTRY_FILES, init=("conf", "club"))
+        findings, code = run_diff(self, root, lambda: replace_in(
+            root, "club/backends.py", "if user is not None and user.check_password(data[\"password\"]):",
+            "if user is not None:"))
         self.assertTrue(code & 4, findings)
 
 
