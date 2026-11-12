@@ -18,6 +18,7 @@ from .lockfile import SHADOWED_STATUS
 from .project import Project, Gap
 from .refactor import Inliner
 from .credentials import CredentialHeuristics, heuristic_api, HEURISTIC_KIND, MANAGER_ATTRS, CREATE_METHODS
+from .candidates import CandidateFinder, CANDIDATE_KIND, GROUPS as CANDIDATE_GROUPS, RANK_ORDER, candidate_api
 from .settings_extract import extract_settings, drf_auth_classes, canonical_value, Dynamic, flat_values, \
     Alternatives
 from .urlconf import UrlConfParser, find_root_urlconfs, Route, mark_shadowing, ENDPOINT_KINDS
@@ -217,6 +218,8 @@ class Analysis:
         self.inliner = Inliner(self.p)
         # (v5, R3) custom credential generators (heuristic mints)
         self.cred = CredentialHeuristics(self)
+        # (v6) candidate tier (candidates.py)
+        self.candf = CandidateFinder(self)
         self._heur_memo: dict = {}
         self._heur_models: dict = {}     # (v5 review) heuristic mint symbol -> model with a credential default
         self.gaps: list[Gap] = list(self.p.gaps)
@@ -265,7 +268,16 @@ class Analysis:
                     f"the project may use it for a different purpose")
         for c in cands:
             if c in self.catalog.mint_calls:
-                out.append((self.catalog.mint_calls[c], note))
+                api = self.catalog.mint_calls[c]
+                if api.heuristic and api.ref is None and isinstance(site.node, ast.Call):
+                    # (v6) a generic signing / JWT primitive: a mint only where its value is kept as a credential
+                    # or it signs a principal identifier (credentials.signed_value_decision)
+                    purpose, why = self.cred.signed_value_decision(site)
+                    if purpose is None:
+                        break
+                    api = MintAPI(symbol=api.symbol, ref=None, purpose=api.purpose, purpose_basis=(
+                        api.purpose_basis + f"; {why}"), kind=api.kind, user_arg=api.user_arg, heuristic=True)
+                out.append((api, note))
                 break
             if c in self.lib_view_methods:
                 for ref in self.lib_view_methods[c]:
@@ -790,6 +802,39 @@ class Analysis:
         return [(api, f"{cls_qn}.create (library) saves {ser} -> creates {model}: " +
                  ", ".join(f"{f} = default {g}()" for f, g, _ in fields))]
 
+    DJANGO_CREATE_VIEWS = ("django.views.generic.CreateView", "django.views.generic.edit.CreateView",
+                           "django.views.generic.edit.BaseCreateView")
+
+    def django_create_view_mints(self, cls_qn) -> list:
+        """(v6) Django's generic CreateView saves its ModelForm in library code (ModelFormMixin.form_valid:
+        `self.object = form.save()`): when the created model (the view's `model`, or the form's Meta.model) has a
+        field default that generates a credential, the route mints it, unless the project replaces form_valid
+        without calling super() (then the project code is analysed instead)."""
+        mro = self.p.mro(cls_qn)
+        if not any(c in self.DJANGO_CREATE_VIEWS for c in mro):
+            return []
+        r = self.p.lookup_method(cls_qn, "form_valid")
+        if r and r[0] == "project" and not self._calls_super(r[1], "form_valid"):
+            return []
+        self.cred.run()
+        model = None
+        _c, mv = self.p.class_attr(cls_qn, "model")
+        if mv is not None and isinstance(mv, (ast.Name, ast.Attribute)):
+            q = self.p.resolve_expr_static(self.p.classes[_c].module, mv)
+            model = self.p.canonical(q) if q else None
+        if model not in self.cred.default_models:
+            form = self.cg.class_attr_type(cls_qn, "form_class")
+            model = self.cred.model_meta(form) if form in self.p.classes else model
+        if model not in self.cred.default_models:
+            return []
+        fields = self.cred.default_models[model]
+        sym = f"{model} via django CreateView"
+        self._heur_models[sym] = model
+        api = heuristic_api(sym, fields[0][2], "heuristic: Django's CreateView saves a model whose field default "
+                                               "generates a credential (not a catalog API)")
+        return [(api, f"{cls_qn} (CreateView) saves its form -> creates {model}: " +
+                 ", ".join(f"{f} = default {g}()" for f, g, _ in fields))]
+
     def inherited_library_mints(self, cls_qn, as_view_kwargs) -> tuple[list, list]:
         mints, notes = [], []
         for c in self.p.mro(cls_qn):
@@ -1115,6 +1160,7 @@ class Analysis:
                         self.gaps.append(Gap("class_decorator_not_analyzed", r.file, c, _u(d), r.line))
             e.funcs += self.class_entry_funcs(r.target, r.actions, viewset=(r.kind == "viewset"))
             e.library_mints += self.drf_library_creation_mints(r.target, r.actions, viewset=(r.kind == "viewset"))
+            e.library_mints += self.django_create_view_mints(r.target)
             mints, notes = self.inherited_library_mints(r.target, r.as_view_kwargs)
             e.library_mints += mints
             e.notes += notes
@@ -1153,6 +1199,11 @@ class Analysis:
                 self._apply_decorator(e, dq)
         elif r.kind == "library_include":
             mints = self.catalog.library_includes.get(r.target)
+            dropped, bnote = self._url_builder_narrowing(r)
+            if bnote:
+                e.notes.append(bnote)
+            if mints and dropped:
+                mints = [m for m in mints if m.ref not in dropped]
             if mints:
                 e.library_mints += [(m, "settings-dependent library URLconf: not every listed flow is "
                                         "necessarily enabled") for m in mints]
@@ -1168,7 +1219,12 @@ class Analysis:
             else:
                 self.gaps.append(Gap("library_include_not_in_catalog", r.file, r.pattern, r.target, r.line))
         elif r.kind == "admin_site":
-            e.library_mints += [(m, "") for m in self.catalog.admin_site_urls[r.target]]
+            sfuncs, replaced, snotes = self.admin_site_parts()
+            e.library_mints += [(m, "") for m in self.catalog.admin_site_urls[r.target] if m.ref not in replaced]
+            for f in sfuncs:
+                if f not in e.funcs:
+                    e.funcs.append(f)
+            e.notes += snotes
             mints, gap, notes = self.admin_registration_info()
             e.library_mints += mints
             e.notes += notes
@@ -1179,6 +1235,31 @@ class Analysis:
             e.notes += notes
             e.gaps += gaps
         return e
+
+    def _url_builder_narrowing(self, r: Route):
+        """(v6) For a route that includes the result of a catalogued URL builder (`build_urlpatterns(Client.X)`):
+        (refs the builder's argument disables, note)."""
+        call = r.node
+        if not isinstance(call, ast.Call):
+            return set(), ""
+        mod = self._module_of_file(r.file)
+        q = self.p.resolve_expr_static(mod, call.func) if mod else None
+        q = self.p.canonical(q) if q else None
+        row = self.catalog.url_builders.get(q or "")
+        if not row:
+            return set(), ""
+        note = f"routes built by {q}(...) ({row['source_location']}): the flows of {row['same_flows_as']}"
+        cond = row.get("refs_only_for_client")
+        if not cond:
+            return set(), note
+        i = cond.get("arg", 0)
+        arg = call.args[i] if len(call.args) > i else None
+        name = arg.attr if isinstance(arg, ast.Attribute) else (arg.id if isinstance(arg, ast.Name) else None)
+        if name is None or name in cond["client_names"]:
+            return set(), note + ("" if name else "; the builder argument is not static: every flow is listed")
+        return set(cond["refs"]), note + (f"; argument {name}: {len(cond['refs'])} flow(s) that need "
+                                          f"{'/'.join(cond['client_names'])} are not routed "
+                                          f"({cond['source_location']})")
 
     # ------------------------------------------------------------- (v5 review fix) project code given to a library flow
     def _module_of_file(self, rel: str) -> str | None:
@@ -1352,9 +1433,19 @@ class Analysis:
         if hit is not None:
             return hit
         code, notes, gaps = [], [], []
+        classes = []
+        # (v6) also inside functions (`def patch_site(): admin.site = MySite()` called from AppConfig.ready()):
+        # MintMap does not decide whether the function runs, so the swap is treated as possible
+        fn_stmts: dict = {}
+        for qn, info in self.p.functions.items():
+            if info.parent is None and "site" in self.cred.mentions(info):
+                fn_stmts.setdefault(info.module, []).extend(
+                    (st, info) for st in self.p.walk_function_body(info.node)
+                    if isinstance(st, (ast.Assign, ast.AugAssign, ast.AnnAssign)))
         for mname in sorted(self.p.modules):
             mod = self.p.modules[mname]
-            for st in self.p._top_level_statements(mod.tree.body):
+            stmts = [(st, None) for st in self.p._top_level_statements(mod.tree.body)] + fn_stmts.get(mname, [])
+            for st, finfo in stmts:
                 if not isinstance(st, (ast.Assign, ast.AugAssign, ast.AnnAssign)):
                     continue
                 targets = st.targets if isinstance(st, ast.Assign) else [st.target]
@@ -1362,7 +1453,7 @@ class Analysis:
                 for t in targets:
                     node = t
                     while isinstance(node, (ast.Attribute, ast.Subscript)):
-                        q = self.p.resolve_expr_static(mname, node)
+                        q = self.p.resolve_expr_static(mname, node, finfo)
                         if q and self.p.canonical(q) in self.ADMIN_SITE_OBJECTS:
                             hitst = True
                             break
@@ -1375,15 +1466,77 @@ class Analysis:
                 vq = self.p.resolve_expr_static(mname, st.value) if isinstance(st.value, (ast.Name, ast.Attribute)) \
                     else None
                 vq = self.p.canonical(vq) if vq else None
-                notes.append(f"{mod.path}:{st.lineno} changes the admin site: {_short(stable_unparse(st), 120)}")
+                site_cls = self._admin_site_class(mname, st.value, finfo)
+                if site_cls and site_cls not in classes:
+                    classes.append(site_cls)
+                where = f" (in {finfo.qualname})" if finfo else ""
+                notes.append(f"{mod.path}:{st.lineno}{where} changes the admin site: "
+                             f"{_short(stable_unparse(st), 120)}")
                 if vq and vq not in self.p.classes and vq not in self.p.functions and \
                         vq.split(".")[0] not in overlay.CATALOG_PACKAGES and vq.split(".")[0] not in STDLIB_TOP:
                     g = Gap("admin_site_customised", mod.path, "admin.site", f"{vq}: library code of a package the "
                             f"catalog does not describe replaces part of the admin site", st.lineno)
                     self.gaps.append(g)
                     gaps.append(g)
+        # (v6) `class X(AdminConfig): default_site = "pkg.sites.MySite"` listed in INSTALLED_APPS
+        for a in self.settings.str_list("INSTALLED_APPS"):
+            cq = self.resolve_dotted(a)
+            if cq in self.p.classes and any(c.startswith("django.contrib.admin.apps.") for c in self.p.mro(cq)):
+                _c, v = self.p.class_attr(cq, "default_site")
+                if isinstance(v, ast.Constant) and isinstance(v.value, str):
+                    sq = self.resolve_dotted(v.value)
+                    if sq in self.p.classes and sq not in classes:
+                        classes.append(sq)
+                        code.append("admin_site_default:" + self.source_dump(sq))
+                        notes.append(f"{a} sets default_site = {v.value!r}")
         self._admin_custom = (code, notes, gaps)
+        self._admin_site_classes = classes
         return self._admin_custom
+
+    def _admin_site_class(self, mname, value, finfo):
+        """The project AdminSite subclass an assigned value installs: `MySite()`, or a module constant bound to
+        `MySite()` (`SITE = MySite()` ... `admin.site = SITE`)."""
+        v = value
+        for _ in range(3):
+            if isinstance(v, ast.Call):
+                q = self.p.resolve_expr_static(mname, v.func, finfo)
+                q = self.p.canonical(q) if q else None
+                return q if q in self.p.classes and any(c.rsplit(".", 1)[-1].endswith("AdminSite")
+                                                         for c in self.p.mro(q)[1:]) else None
+            if isinstance(v, (ast.Name, ast.Attribute)):
+                q = self.p.resolve_expr_static(mname, v, finfo)
+                q = self.p.canonical(q) if q else None
+                m, rest = self.p.module_prefix(q) if q else (None, [])
+                if not m or len(rest) != 1:
+                    return None
+                vals = [st.value for st in self.p._top_level_statements(self.p.modules[m].tree.body)
+                        if isinstance(st, ast.Assign) and any(isinstance(t, ast.Name) and t.id == rest[0]
+                                                              for t in st.targets)]
+                if len(vals) != 1:
+                    return None
+                mname, v, finfo = m, vals[0], None
+                continue
+            return None
+        return None
+
+    ADMIN_SITE_METHODS = ("login", "logout", "password_change", "password_change_done", "admin_view",
+                          "has_permission", "index", "app_index", "each_context", "get_urls")
+
+    def admin_site_parts(self):
+        """(v6) [(func, ctx, role)] project methods of installed AdminSite subclasses, and the library admin-site
+        mint refs their overrides replace (an override that never calls super() replaces the library flow)."""
+        self.admin_site_customisation()
+        funcs, replaced, notes = [], set(), []
+        for cq in self.__dict__.get("_admin_site_classes", []):
+            for m in self.ADMIN_SITE_METHODS:
+                r = self.p.lookup_method(cq, m)
+                if r and r[0] == "project":
+                    funcs.append((r[1], cq, "admin_site"))
+                    if m == "login" and not self._calls_super(r[1], "login"):
+                        replaced.add("django.contrib.admin.sites.AdminSite.login")
+                        notes.append(f"{cq}.login replaces AdminSite.login (no super() call): the project method is "
+                                     f"analysed instead of the library flow")
+        return funcs, replaced, notes
 
     def _project_admin_registrations(self) -> list:
         """(v5, R2c) `admin.site.register(Model, ...)` / `@admin.register(Model)` in project code where the model's
@@ -1468,8 +1621,10 @@ class Analysis:
                 for name, mq in self.p.classes[c].methods.items():
                     if name in ("save", "create", "update"):
                         out.append((mq, t))
-            # (v5 review) pre_save / post_save receivers of a model run on its save()
-            out += [(f, None) for f in self.cred.signal_receivers().get(t, [])]
+            # (v5 review) pre_save / post_save receivers of a model run on its save(); (v6) an instance save()
+            # that is not a creation does not reach a receiver whose whole body is guarded by `if created:`
+            out += [(f, None) for f in self.cred.signal_receivers().get(t, [])
+                    if not self._creation_only_receiver(f)]
         out += self.model_save_edges(site, res, ctx)
         if res.library and ctx and res.via in ("super", "self"):
             meth = res.library.rsplit(".", 1)[-1]
@@ -1482,6 +1637,25 @@ class Analysis:
             # (v3) a project CBV run from code: Cls.as_view(**kw)(request) -> its handlers and hooks
             out += [(f, c) for f, c, _ in self.class_entry_funcs(inv[0])]
         return out
+
+    def _creation_only_receiver(self, fq) -> bool:
+        """A post_save receiver `def f(sender, instance, created, **kw)` whose body (docstring aside) is one
+        `if created:` block without else, or starts with `if not created: return`."""
+        info = self.p.functions.get(fq)
+        if not info or "created" not in info.params and not any(
+                a.arg == "created" for a in info.node.args.kwonlyargs):
+            return False
+        body = [st for st in info.node.body if not (isinstance(st, ast.Expr) and isinstance(st.value, ast.Constant))]
+        if not body:
+            return False
+        first = body[0]
+        if not isinstance(first, ast.If):
+            return False
+        t = first.test
+        if len(body) == 1 and isinstance(t, ast.Name) and t.id == "created" and not first.orelse:
+            return True
+        return isinstance(t, ast.UnaryOp) and isinstance(t.op, ast.Not) and isinstance(t.operand, ast.Name) and \
+            t.operand.id == "created" and len(first.body) == 1 and isinstance(first.body[0], ast.Return)
 
     def model_save_edges(self, site, res, ctx) -> list:
         """(v5, R3) creating a project model runs its project `save()`: `M.objects.create/get_or_create/...`, the
@@ -1556,6 +1730,12 @@ class Analysis:
             for site in self.cg.sites(fq):
                 inv = self.as_view_invocation(site)
                 if not inv:
+                    # (v6) a catalogued FUNCTION view called directly with the request (`return complete(request,
+                    # backend)` in a project view): the library flow runs exactly as if the route pointed at it
+                    for api, note in self.function_view_invocation(site, _ctx):
+                        if (api.symbol, api.ref) not in seen:
+                            seen.add((api.symbol, api.ref))
+                            out.append((api, note))
                     continue
                 cq, av = inv
                 kwargs = {k.arg: k.value for k in av.keywords if k.arg}
@@ -1586,6 +1766,27 @@ class Analysis:
                         seen.add((api.symbol, api.ref))
                         out.append((api, "; ".join(x for x in (note, how) if x)))
         return out
+
+    def function_view_invocation(self, site, ctx) -> list:
+        """(v6) [(MintAPI, note)] when the call site runs a catalogued library function view (catalog
+        `function_alias`) with the HTTP request as an argument."""
+        call = site.node
+        if site.is_property or not isinstance(call, ast.Call):
+            return []
+        if not any((isinstance(a, ast.Name) and a.id == "request") or (isinstance(a, ast.Attribute) and
+                                                                         a.attr == "request")
+                   for a in list(call.args) + [k.value for k in call.keywords]):
+            return []
+        res = self.cg.resolve(site, ctx)
+        if not res.library or res.targets:
+            return []
+        status, sym, _akw, trail = self.library_view_info(res.library)
+        if status != "mapped" or not self.catalog.library_views[sym].get("function_alias"):
+            return []
+        how = f"library view {sym} called directly from {site.func} (line {site.line})" + (
+            f" ({'; '.join(trail)})" if trail else "")
+        return [(self.catalog.mint_for_ref(ref, "library_view", sym), how)
+                for ref in self.catalog.library_views[sym]["refs"]]
 
     def form_types_for(self, site, res, ctx) -> list:
         """Project classes the receiver of `x.is_valid()` may be (typed local, or every class
@@ -2510,7 +2711,7 @@ class Analysis:
         return out
 
     def make_path(self, entry: Entry, mint_api: MintAPI, purpose_note, site=None, site_func=None, chains=(),
-                  truncated=False, graph=None):
+                  truncated=False, graph=None, candidate=None):
         if site is not None:
             ordinal = sum(1 for s in self.cg.sites(site_func[0])
                           if s.line < site.line and self._mint_symbol(s, site_func[1]) == mint_api.symbol)
@@ -2654,6 +2855,10 @@ class Analysis:
             analysis_complete=not [g for g in path_gaps if g.type != "fingerprint_depth_limit"],
             fingerprint_complete=not [g for g in path_gaps if g.type == "fingerprint_depth_limit"],
             fingerprint=fp,
+            # (v6) confirmed: catalog API / library flow / R3 heuristic / principal session key; candidate: see
+            # candidates.py (kept out of `paths`, one review entry per site)
+            tier="candidate" if candidate is not None else "confirmed",
+            **({"candidate": candidate} if candidate is not None else {}),
         ), path_gaps
 
     def _mint_symbol(self, s, ctx):
@@ -2692,7 +2897,7 @@ class Analysis:
         for m in sorted(self.runtime_urlconfs):
             if m not in roots:
                 roots.append(m)
-        up = UrlConfParser(self.p, self.settings.values)
+        up = UrlConfParser(self.p, self.settings.values, url_builders=self.catalog.url_builders)
         for r in roots:
             up.parse_root(r)
         # (v5 review fix) a URLconf no root reaches is still parsed (as a root of its own) so that its routes and
@@ -2729,13 +2934,24 @@ class Analysis:
                 continue
             starts = [(f, c) for f, c, _ in e.funcs]
             graph = self.traverse(starts)
-            reachable_funcs |= set(graph)
             known = {(api.symbol, api.ref) for api, _ in e.library_mints}
-            for api, note in self.invoked_library_views(graph):
-                if (api.symbol, api.ref) not in known:
-                    p, g = self.make_path(e, api, note, chains=[])
-                    paths.append(p)
-                    all_path_gaps += g
+            invoked = [(api, note) for api, note in self.invoked_library_views(graph)
+                       if (api.symbol, api.ref) not in known]
+            extra = []
+            if invoked:
+                # (v6) a library flow run from project code runs the project hooks its settings name, as when the
+                # route points at the library view (R5): the hooks are entry functions of this entry too
+                extra += [f for f in self.hook_entry_funcs({a.symbol.split(".")[0] for a, _ in invoked})
+                          if f not in e.funcs]
+            if extra:
+                e.funcs += extra
+                starts = [(f, c) for f, c, _ in e.funcs]
+                graph = self.traverse(starts)
+            reachable_funcs |= set(graph)
+            for api, note in invoked:
+                p, g = self.make_path(e, api, note, chains=[])
+                paths.append(p)
+                all_path_gaps += g
             for node in sorted(graph, key=str):
                 fq, ctx = node
                 for site in self.cg.sites(fq):
@@ -2758,8 +2974,20 @@ class Analysis:
                                           truncated=trunc, graph=graph)
                     paths.append(p)
                     all_path_gaps += g
+                # (v6) candidate tier: statement sites of this function, and calls handing the request to an
+                # uncatalogued authentication-package function
+                for site, api, note, cinfo in self.candidate_sites(fq, ctx):
+                    reached_mints.add((fq, site.line, api.symbol))
+                    chains, trunc = self.chains(graph, starts, node)
+                    p, _g = self.make_path(e, api, note, site=site, site_func=node, chains=chains,
+                                           truncated=trunc, graph=graph, candidate=cinfo)
+                    paths.append(p)     # (v6) a candidate's gaps stay on its own entry, not in the global list
         paths += self.unrouted_paths(reached_mints, all_path_gaps)
+        paths += self.minting_subclass_paths(entries, [])
         paths = self.group_shared_heuristic_sites(paths)
+        cand_paths = [p for p in paths if p.get("tier") == "candidate"]
+        paths = [p for p in paths if p.get("tier") != "candidate"]
+        candidates = self.group_candidate_sites(cand_paths)
         self.global_unresolved(reachable_funcs)
         # dedupe identical path ids (same route listed twice)
         uniq = {}
@@ -2799,6 +3027,7 @@ class Analysis:
             gaps_by_type=by_type, gaps=[g.as_dict() for g in gap_list],
             limits=dict(chain_limit=self.chain_limit, fingerprint_depth=self.fp_depth),
             custom_credentials=self.custom_credential_summary(),
+            candidates=self.candidate_summary(candidates),
         )
         return dict(
             tool=dict(name="mintmap", version=TOOL_VERSION, catalog_path=os.path.basename(self.catalog.path),
@@ -2810,7 +3039,7 @@ class Analysis:
             routes=[r.describe() for r in sorted(up.routes, key=lambda r: (r.pattern, r.target))],
             derived_mint_wrappers=self.derived_wrappers(),
             settings_groups=self.settings_groups(),
-            paths=paths, coverage=coverage)
+            paths=paths, candidates=candidates, coverage=coverage)
 
     HEURISTIC_GROUP_MIN = 6
 
@@ -2825,10 +3054,11 @@ class Analysis:
         entry."""
         groups: dict = {}
         for p in paths:
-            if p["mint"]["kind"] != HEURISTIC_KIND or p["entry"]["kind"] == "unrouted":
+            if p["mint"]["kind"] != HEURISTIC_KIND or p["entry"]["kind"] == "unrouted" or p.get("tier") == "candidate":
                 continue
             site = p["mint"].get("site") or {}
-            groups.setdefault((p["mint"]["api"], site.get("function"), site.get("line")), []).append(p)
+            # (v6) line-independent: a line inserted above the site must not replace the entry
+            groups.setdefault((p["mint"]["api"], site.get("function"), None), []).append(p)
         drop, add = set(), []
         for key, ps in sorted(groups.items(), key=lambda kv: str(kv[0])):
             ids = sorted({p["entry"]["id"] for p in ps})
@@ -2878,13 +3108,154 @@ class Analysis:
                         hooks=[])
         where = func or api
         return dict(
-            id=hashlib.sha256(f"heuristic_site||{api}|{func}:{line}".encode()).hexdigest()[:16],
-            entry=dict(kind="heuristic_site", id=f"heuristic_site:{where}:{line}", view=where, route=None,
+            id=hashlib.sha256(f"heuristic_site||{api}|{func}".encode()).hexdigest()[:16],
+            entry=dict(kind="heuristic_site", id=f"heuristic_site:{where}", view=where, route=None,
                        functions=[], gates=[], notes=[note], reached_from=ids),
             mint=ps[0]["mint"], chain=min((p["chain"] for p in ps), key=len),
             chains_analyzed=sum(p["chains_analyzed"] for p in ps), shadowed=all(p["shadowed"] for p in ps),
             evidence=evidence, gaps=gaps, analysis_complete=all(p["analysis_complete"] for p in ps),
             fingerprint_complete=all(p.get("fingerprint_complete", True) for p in ps), fingerprint=fp)
+
+    # ------------------------------------------------------------------------------------ (v6) candidate tier
+    def candidate_sites(self, fq, ctx) -> list:
+        """[(site, MintAPI, note, candidate info)] candidate mint sites of one function (see candidates.py)."""
+        out = list(self.candf.function_sites(fq))
+        for site in self.cg.sites(fq):
+            if site.is_property:
+                continue
+            res = self.cg.resolve(site, ctx)
+            if res.targets or self.mint_of(site, res):
+                continue
+            for api, note, cinfo in self.candf.call_candidate(site, res):
+                out.append((site, api, note, cinfo))
+        return out
+
+    def minting_subclass_paths(self, entries, all_path_gaps) -> list:
+        """(v6) Candidate entries for project subclasses of a catalogued MINTING middleware or library view that
+        no MIDDLEWARE item, route or as_view() invocation MintMap saw uses (a settings list computed at run time,
+        a URLconf built dynamically): their own code and the library mint are traced as if they were registered,
+        so the code is fingerprinted and visible."""
+        used = {e.view for e in entries} | {e.ctx_class for e in entries if e.ctx_class}
+        for e in entries:
+            for f, c, _role in e.funcs:
+                if c:
+                    used.add(c)
+        # a class run from code (`Cls.as_view(...)(request)`) or referenced by name in project code outside the
+        # settings modules (registered at run time, passed to a factory) is not reported as unregistered; a dotted
+        # string in a settings list MintMap could not evaluate does not count as a use
+        named = set()
+        settings_mods = set(self.settings.modules or [])
+        for fq, info in self.p.functions.items():
+            if info.module not in settings_mods:
+                named |= self.cred.mentions(info)
+        for mname, mod in self.p.modules.items():
+            if mname in settings_mods:
+                continue
+            for st in self.p._top_level_statements(mod.tree.body):
+                if not isinstance(st, (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef, ast.Import,
+                                       ast.ImportFrom)):
+                    for n in ast.walk(st):
+                        if isinstance(n, ast.Name):
+                            named.add(n.id)
+                        elif isinstance(n, ast.Attribute):
+                            named.add(n.attr)
+        for v in list(used):
+            if v in self.p.classes:
+                used |= set(self.p.mro(v))
+        out = []
+        for cq in sorted(self.p.classes):
+            if cq in used or cq.rsplit(".", 1)[-1] in named:
+                continue
+            mro = self.p.mro(cq)
+            kind, base, mints = None, None, []
+            for c in mro[1:]:
+                if c in self.catalog.library_middleware:
+                    kind, base, mints = "middleware", c, self.catalog.library_middleware[c]
+                    break
+                if c in self.catalog.library_views and self.catalog.library_views[c].get("mint_methods"):
+                    d = self.catalog.library_views[c]
+                    kind, base = "view", c
+                    mints = [self.catalog.mint_for_ref(ref, "library_view", c) for ref in d["refs"]]
+                    break
+            if not kind:
+                continue
+            # a subclass of it that IS used covers it; an abstract helper base used by a registered class is in mro
+            if any(cq in self.p.mro(o) for o in used if o in self.p.classes):
+                continue
+            e = Entry(id=f"unregistered_{kind}:{cq}", kind="candidate_entry", view=cq, ctx_class=cq)
+            e.notes.append(f"project subclass of the catalogued minting {kind} {base}; MintMap did not see it in "
+                           f"MIDDLEWARE, a route or an as_view() call (a value computed at run time?)")
+            methods = MIDDLEWARE_METHODS if kind == "middleware" else HTTP_VERBS + list(HOOK_DISPATCHERS)
+            for m in methods:
+                r = self.p.lookup_method(cq, m)
+                if r and r[0] == "project" and (r[1], cq, kind) not in e.funcs:
+                    e.funcs.append((r[1], cq, kind))
+            reason = f"subclass of {base} ({kind} that mints) not seen registered or routed"
+            cinfo = dict(group="minting_subclass", rank="high", reason=reason, signals=[f"{kind}_subclass"],
+                         keys=[base])
+            for api, _ in [(m, "") for m in mints]:
+                p, g = self.make_path(e, api, f"inherited from {base}; {reason}", chains=[], candidate=cinfo)
+                p["mint"]["site"] = None
+                out.append(p)
+                all_path_gaps += g
+            if e.funcs:
+                starts = [(f, c) for f, c, _ in e.funcs]
+                graph = self.traverse(starts)
+                for node in sorted(graph, key=str):
+                    fq, ctx = node
+                    for site in self.cg.sites(fq):
+                        for api, note in self.mint_of(site, self.cg.resolve(site, ctx)):
+                            chains, trunc = self.chains(graph, starts, node)
+                            p, g = self.make_path(e, api, note, site=site, site_func=node, chains=chains,
+                                                  truncated=trunc, graph=graph, candidate=cinfo)
+                            out.append(p)
+                            all_path_gaps += g
+        return out
+
+    def group_candidate_sites(self, cand_paths) -> list:
+        """(v6) One review entry per candidate site (mint symbol, function, line) whatever the number of entry
+        points that reach it (all listed in `reached_from`; a new or lost one, or a change on any of their paths,
+        changes the entry), sorted by group and rank."""
+        groups: dict = {}
+        for p in cand_paths:
+            # line-independent identity (a line inserted above the site must not turn it into a new candidate)
+            site = p["mint"].get("site") or {}
+            key = (p["mint"]["api"], site.get("function") or p["entry"]["view"], None)
+            groups.setdefault(key, []).append(p)
+        out = []
+        for key, ps in sorted(groups.items(), key=lambda kv: str(kv[0])):
+            ids = sorted({p["entry"]["id"] for p in ps})
+            g = self._grouped_path(key, ps, ids)
+            cinfo = dict(ps[0]["candidate"])
+            cinfo["rank"] = min((p["candidate"]["rank"] for p in ps), key=lambda r: RANK_ORDER.get(r, 9))
+            routed = [i for i in ids if not i.startswith("unrouted:")]
+            api, func, line = key
+            where = func or api
+            g["id"] = hashlib.sha256(f"candidate_site||{api}|{func}".encode()).hexdigest()[:16]
+            note = (f"candidate ({cinfo['group']}, {cinfo['rank']}): {cinfo['reason']}; reached from "
+                    f"{len(routed)} routed entry point(s)" + (f" and {len(ids) - len(routed)} unrouted root(s)"
+                                                              if len(ids) > len(routed) else ""))
+            g["entry"] = dict(kind="candidate_site", id=f"candidate_site:{where}", view=where, route=None,
+                              functions=[], gates=[], notes=[note], reached_from=ids)
+            g["evidence"]["context"] = [note] + [c for c in g["evidence"].get("context", [])[1:]]
+            g["tier"] = "candidate"
+            g["candidate"] = cinfo
+            g["mint"] = dict(ps[0]["mint"])
+            out.append(g)
+        out.sort(key=lambda c: (c["candidate"]["group"], RANK_ORDER.get(c["candidate"]["rank"], 9), c["entry"]["id"]))
+        return out
+
+    def candidate_summary(self, candidates) -> dict:
+        by = {}
+        for c in candidates:
+            row = by.setdefault(c["candidate"]["group"], dict(sites=0, high=0, medium=0))
+            row["sites"] += 1
+            row[c["candidate"]["rank"]] = row.get(c["candidate"]["rank"], 0) + 1
+        return dict(groups={g: dict(by.get(g, dict(sites=0, high=0, medium=0)), description=d)
+                            for g, d in CANDIDATE_GROUPS.items()},
+                    sites=len(candidates),
+                    set_aside_count=len(self.candf.set_aside),
+                    set_aside=sorted(self.candf.set_aside, key=lambda r: (r["function"], r["line"]))[:200])
 
     def custom_credential_summary(self) -> dict:
         """(v5, R3) what the custom-credential heuristic found and what it set aside (not part of the lock)."""
@@ -2913,7 +3284,12 @@ class Analysis:
             for site, api, note in self.extra_mint_sites(fq):
                 if (fq, site.line, api.symbol) not in reached:
                     mint_nodes.append((fq, ctx, site, api, note))
-        for fq, ctx, site, api, note in mint_nodes:
+            for site, api, note, cinfo in self.candidate_sites(fq, ctx):
+                if (fq, site.line, api.symbol) not in reached and self.candf.unrouted_allowed(fq, cinfo):
+                    mint_nodes.append((fq, ctx, site, api, note, cinfo))
+        for node in mint_nodes:
+            fq, ctx, site, api, note = node[:5]
+            cinfo = node[5] if len(node) > 5 else None
             roots, seen, stack = set(), {fq}, [fq]
             while stack:
                 n = stack.pop()
@@ -2926,6 +3302,8 @@ class Analysis:
                         stack.append(c)
             if not roots:
                 roots = {fq}  # recursion-only cycle
+            # (v6) Django data migrations run under `manage.py migrate`, never in a request
+            roots = {r for r in roots if ".migrations." not in f".{r}."}
             for root in sorted(roots)[:10]:
                 rinfo = self.p.functions[root]
                 e = Entry(id=f"unrouted:{root}", kind="unrouted", view=root, funcs=[(root, rinfo.cls, "unrouted")],
@@ -2939,9 +3317,11 @@ class Analysis:
                 chains, trunc = self.chains(graph, [(root, rinfo.cls)], target) if target in graph else ([], False)
                 if not chains:
                     chains = [([target], [])] if root == fq else []
-                p, g = self.make_path(e, api, note, site=site, site_func=target, chains=chains, truncated=trunc)
+                p, g = self.make_path(e, api, note, site=site, site_func=target, chains=chains, truncated=trunc,
+                                      candidate=cinfo)
                 out.append(p)
-                all_path_gaps += g
+                if cinfo is None:
+                    all_path_gaps += g
             if len(roots) > 10:
                 self.gaps.append(Gap("unrouted_roots_truncated", self.p.file_of(fq), fq, f"{len(roots)} roots"))
         return out

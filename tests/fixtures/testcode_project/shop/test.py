@@ -2,5 +2,6 @@
 from django.core import signing
 
 
-def coupon(order_id):
-    return signing.dumps({"order": order_id})
+def coupon(user):
+    # (v6) a signed principal id: generic signing primitives are mints only for credential-like values
+    return signing.dumps({"u": user.pk})

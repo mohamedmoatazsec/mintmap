@@ -74,6 +74,23 @@ def summarize(report: dict) -> str:
         for u in ev.get("unrecognized_checks", []):
             lines.append(f"        ? unrecognized check {u['call']} in {u['function']}:{u['line']} -> {u['target']} "
                          f"({u['reason']})")
+    cands = report.get("candidates", [])
+    cs = cov.get("candidates") or {}
+    lines.append(f"candidates (lower confidence; one review entry per site, grouped by kind): {len(cands)} site(s); "
+                 f"{cs.get('set_aside_count', 0)} session write(s) set aside")
+    for grp, info in (cs.get("groups") or {}).items():
+        members = [c for c in cands if c["candidate"]["group"] == grp]
+        if not members:
+            continue
+        lines.append(f"  candidates:{grp} ({info['description']}): {len(members)} site(s), "
+                     f"{info.get('high', 0)} high / {info.get('medium', 0)} medium")
+        for c in members:
+            m = c["mint"]
+            where = f"{m['site']['function']}:{m['site']['line']}" if m.get("site") else c["entry"]["view"]
+            reached = c["entry"].get("reached_from") or []
+            lines.append(f"    [{c['id']}] {c['candidate']['rank']:<6} {where}  reached from {len(reached)} entry "
+                         f"point(s): {', '.join(reached[:3])}{' ...' if len(reached) > 3 else ''}")
+            lines.append(f"        {c['candidate']['reason']}")
     lines.append(f"gaps by type: {cov['gaps_by_type'] or '{}'}")
     for g in cov["gaps"][:40]:
         lines.append(f"  gap {g['type']}: {g['file']} {g['where']} :: {g['detail']}")
@@ -94,7 +111,7 @@ def _load_lock(lock_path: str):
     ok = isinstance(lock, dict) and all(
         isinstance(lock.get(k, []), list) and all(isinstance(e, dict) and isinstance(e.get("id"), str)
                                                   for e in lock.get(k, []))
-        for k in ("paths", "settings"))
+        for k in ("paths", "settings", "candidates"))
     if not ok or "paths" not in lock:
         print(f"mintmap: {lock_path} is not a MintMap lock (expected a JSON object with a 'paths' list of entries)",
               file=sys.stderr)
@@ -110,7 +127,7 @@ def run_accept(args, lock_path: str) -> int:
     lock = _load_lock(lock_path)
     if lock is None:
         return EXIT_ERROR
-    entries = list(lock.get("settings", [])) + list(lock.get("paths", []))
+    entries = list(lock.get("settings", [])) + list(lock.get("candidates", [])) + list(lock.get("paths", []))
     chosen = []
     if args.all:
         chosen = [e for e in entries if e.get("review_status") != "accepted"]

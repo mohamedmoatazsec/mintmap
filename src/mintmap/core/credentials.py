@@ -196,7 +196,7 @@ class CredentialHeuristics:
         def call_labels(c, local):
             labs = set()
             sym = self._resolve_static(info.module, c.func, info)
-            if sym in SOURCES and self._is_generator_call(c, sym, info):
+            if (sym in SOURCES or sym in self.a.catalog.secret_generators) and self._is_generator_call(c, sym, info):
                 return {("src", qn, id(c))}
             site = sites.get(id(c))
             res = self.cg.resolve(site, ctx) if site is not None else None
@@ -244,7 +244,8 @@ class CredentialHeuristics:
         for n in body:
             if isinstance(n, ast.Call):
                 sym = self._resolve_static(info.module, n.func, info)
-                if sym in SOURCES and self._is_generator_call(n, sym, info):
+                if (sym in SOURCES or sym in self.a.catalog.secret_generators) and \
+                        self._is_generator_call(n, sym, info):
                     t.sources.append((n, sym, n.lineno))
         # (v5 review) parameters carry a "param" label: a credential passed to a helper that stores it is found
         # at the caller (`_persist(owner, raw)`); "param" labels are never sources themselves
@@ -376,7 +377,7 @@ class CredentialHeuristics:
                     if lf:
                         leaves.setdefault(lf, set()).add(qn)
         rel = set()
-        for leaf in SOURCE_LEAVES | {"SystemRandom"}:
+        for leaf in SOURCE_LEAVES | {"SystemRandom"} | {g.rsplit(".", 1)[-1] for g in self.a.catalog.secret_generators}:
             rel |= leaves.get(leaf, set())
         rel = {q for q in rel if self.fn(q).sources}
         frontier = {q for q in rel if self.sources_of(self.fn(q).returns)}
@@ -523,13 +524,76 @@ class CredentialHeuristics:
         memo[model_qn] = ok
         return ok
 
+    def related_models(self, attr) -> list:
+        """(v6) Project models reachable through a reverse relation accessor named `attr`: the `related_name` of a
+        ForeignKey / OneToOneField / ManyToManyField declared on a project model (`%(class)s` expanded), or Django's
+        default `<model>_set`.  `team.tokens.create(...)` creates the model that declares
+        `team = ForeignKey(Team, related_name="tokens")`."""
+        rm = self.__dict__.get("_related_map")
+        if rm is None:
+            rm = {}
+            for cq in sorted(self.p.classes):
+                if not self.is_model(cq):
+                    continue
+                cc = self.p.classes[cq]
+                short = cq.rsplit(".", 1)[-1].lower()
+                for st in cc.node.body:
+                    if not (isinstance(st, (ast.Assign, ast.AnnAssign)) and isinstance(st.value, ast.Call)):
+                        continue
+                    fn = st.value.func
+                    leaf = fn.attr if isinstance(fn, ast.Attribute) else (fn.id if isinstance(fn, ast.Name) else "")
+                    if leaf not in RELATION_FIELDS:
+                        continue
+                    rel = next((k.value for k in st.value.keywords if k.arg == "related_name"), None)
+                    if isinstance(rel, ast.Constant) and isinstance(rel.value, str):
+                        if rel.value.endswith("+"):
+                            continue
+                        name = rel.value.replace("%(class)s", short).replace("%(app_label)s", "")
+                    elif rel is None:
+                        name = f"{short}_set"
+                    else:
+                        continue
+                    rm.setdefault(name, set()).add(cq)
+            rm = {k: sorted(v) for k, v in rm.items()}
+            self._related_map = rm
+        return rm.get(attr, [])
+
+    def _related_creation(self, f, info):
+        """(v6) `<instance expr>.<accessor>.<create>(...)` where <accessor> is a reverse relation of a project model:
+        (model, how) | ("related:<accessor>", how) when the accessor names no project model (a library model's
+        relation, e.g. `device.token_set`) | (None, None) when the receiver is a class / module (`M.objects` is
+        handled by the caller, `stripe.Customer.create` is not a relation)."""
+        if not (isinstance(f, ast.Attribute) and f.attr in CREATE_METHODS and isinstance(f.value, ast.Attribute)):
+            return None, None
+        acc = f.value
+        if acc.attr in MANAGER_ATTRS or acc.attr.startswith("_"):
+            return None, None
+        recv = acc.value
+        on_self = isinstance(recv, ast.Name) and recv.id in ("self", "cls") or (
+            isinstance(recv, ast.Attribute) and isinstance(recv.value, ast.Name) and recv.value.id == "self")
+        q = self._resolve_static(info.module, recv, info) if isinstance(recv, (ast.Name, ast.Attribute)) else None
+        if q and not on_self and (q in self.p.classes or q in self.p.modules or not self.p.is_project(q)):
+            return None, None       # a class / module attribute (`M.objects` is handled by the caller), a library
+        models = self.related_models(acc.attr)
+        if len(models) > 1:
+            with_defaults = [m for m in models if m in self.default_models]
+            models = with_defaults if len(with_defaults) == 1 else models
+        if len(models) == 1:
+            return models[0], f"{acc.attr}.{f.attr}"
+        if not models and (acc.attr.endswith("_set") or acc.attr.endswith("s")):
+            return "related:" + acc.attr, f"{acc.attr}.{f.attr}"
+        return None, None
+
     def _creation_model(self, call, info, ctx):
         """Project model created by this call: `M(...)`, `M.objects.<create>(...)` (also `M.objects.filter(...)
-        .<create>`)."""
+        .<create>`), (v6) `<instance>.<reverse accessor>.<create>(...)`."""
         f = call.func
         q = self._resolve_static(info.module, f, info)
         if q and q in self.p.classes and self.is_model(q):
             return q, "constructor"
+        model, how = self._related_creation(f, info)
+        if model:
+            return model, how
         if isinstance(f, ast.Attribute) and f.attr in CREATE_METHODS:
             v = f.value
             while isinstance(v, (ast.Call, ast.Attribute)):
@@ -559,12 +623,13 @@ class CredentialHeuristics:
                     fields += [(str(dk.value), dv) for dk, dv in zip(k.value.keys, k.value.values)
                                if dk is not None and isinstance(dk, ast.Constant) and lab(dv, local)]
             pm = model[6:] if model.startswith("param:") else ""
+            rel = model[8:] if model.startswith("related:") else ""
             for k, v in fields:
+                what = 'the model passed as ' + pm if pm else (f"the model behind the relation {rel}" if rel else model)
                 t.sinks.append(Sink("model_create", qn, n.lineno, [k], _ctx_names(v, holders),
-                                    frozenset(lab(v, local)), f"{_u(n.func)}({k}=...) creates "
-                                                              f"{model if not pm else 'the model passed as ' + pm}",
-                                    owner="" if pm else model.rsplit(".", 1)[-1],
-                                    principal=False if pm else self.links_user(model), owner_param=pm))
+                                    frozenset(lab(v, local)), f"{_u(n.func)}({k}=...) creates {what}",
+                                    owner="" if pm else (rel if rel else model.rsplit(".", 1)[-1]),
+                                    principal=False if (pm or rel) else self.links_user(model), owner_param=pm))
             return
         leaf = n.func.attr if isinstance(n.func, ast.Attribute) else (n.func.id if isinstance(n.func, ast.Name) else "")
         if leaf == "save" and kw_tainted:
@@ -655,34 +720,171 @@ class CredentialHeuristics:
                                             principal=principal, owner_param=owner_param))
 
     # ------------------------------------------------------------------ (v5 review) hand-rolled session logins
+    # (v6) keys are compared as PATTERNS: a literal key is itself; an f-string / str.format / % / + key, or a key
+    # held in a local variable or a module constant, is its constant text with "{}" for each computed part
+    # (`f"customer_auth_id:{org.pk}"` -> "customer_auth_id:{}").  A session is `<x>.session`, a local alias of
+    # one (`session = request.session`) or a SessionStore object (`s = SessionStore(key)`).
+    def mentions(self, info) -> set:
+        """Attribute and name identifiers used in a function body (one walk, cached): a cheap pre-filter."""
+        memo = self.__dict__.setdefault("_mentions", {})
+        hit = memo.get(info.qualname)
+        if hit is None:
+            hit = set()
+            for n in self.p.walk_function_body(info.node):
+                if isinstance(n, ast.Attribute):
+                    hit.add(n.attr)
+                elif isinstance(n, ast.Name):
+                    hit.add(n.id)
+            memo[info.qualname] = hit
+        return hit
+
+    def local_assignments(self, info) -> dict:
+        """{local name: [assigned value expressions]} for single-target `name = value` statements (cached)."""
+        memo = self.__dict__.setdefault("_local_assigns", {})
+        hit = memo.get(info.qualname)
+        if hit is None:
+            hit = {}
+            for n in self.p.walk_function_body(info.node):
+                if isinstance(n, ast.Assign) and len(n.targets) == 1 and isinstance(n.targets[0], ast.Name):
+                    hit.setdefault(n.targets[0].id, []).append(n.value)
+            memo[info.qualname] = hit
+        return hit
+
+    def session_aliases(self, info) -> tuple:
+        """({local names bound to a session}, {local names bound to a SessionStore object})."""
+        memo = self.__dict__.setdefault("_sess_alias", {})
+        if info.qualname in memo:
+            return memo[info.qualname]
+        sess, store = set(), set()
+        for n in self.p.walk_function_body(info.node):
+            if isinstance(n, ast.Assign) and len(n.targets) == 1 and isinstance(n.targets[0], ast.Name):
+                v = n.value
+                if isinstance(v, ast.Attribute) and v.attr == "session":
+                    sess.add(n.targets[0].id)
+                elif isinstance(v, ast.Call) and _leaf(v.func) == "SessionStore":
+                    store.add(n.targets[0].id)
+        memo[info.qualname] = (sess, store)
+        return sess, store
+
+    def is_session_expr(self, e, info) -> bool:
+        if isinstance(e, ast.Attribute) and e.attr == "session":
+            return True
+        if isinstance(e, ast.Name):
+            sess, store = self.session_aliases(info)
+            return e.id in sess or e.id in store
+        return False
+
+    def key_patterns(self, e, info, _depth=0) -> set:
+        """Patterns of a session key expression (see above); "?" for a key MintMap cannot read."""
+        if _depth > 4:
+            return {"?"}
+        if isinstance(e, ast.Constant) and isinstance(e.value, str):
+            return {e.value}
+        if isinstance(e, ast.JoinedStr):
+            parts = []
+            for v in e.values:
+                if isinstance(v, ast.Constant) and isinstance(v.value, str):
+                    parts.append(v.value)
+                elif isinstance(v, ast.FormattedValue) and isinstance(v.value, (ast.Name, ast.Attribute)) and \
+                        v.format_spec is None and self.module_str_constant(info.module, v.value, info) is not None:
+                    parts.append(self.module_str_constant(info.module, v.value, info))   # f"{PREFIX}:{x}"
+                else:
+                    parts.append("{}")
+            return {"".join(parts)}
+        if isinstance(e, ast.Call) and isinstance(e.func, ast.Attribute) and e.func.attr == "format" and \
+                isinstance(e.func.value, ast.Constant) and isinstance(e.func.value.value, str):
+            return {re.sub(r"\{[^{}]*\}", "{}", e.func.value.value)}
+        if isinstance(e, ast.BinOp) and isinstance(e.op, ast.Mod) and isinstance(e.left, ast.Constant) and \
+                isinstance(e.left.value, str):
+            return {re.sub(r"%[-#0 +]*\d*(?:\.\d+)?[sdirfx]", "{}", e.left.value)}
+        if isinstance(e, ast.BinOp) and isinstance(e.op, ast.Add):
+            out = set()
+            for x in self.key_patterns(e.left, info, _depth + 1):
+                for y in self.key_patterns(e.right, info, _depth + 1):
+                    out.add((x if x != "?" else "{}") + (y if y != "?" else "{}"))
+            return out
+        if isinstance(e, ast.Name):
+            vals = self.local_assignments(info).get(e.id, [])
+            if vals:
+                out = set()
+                for v in vals:
+                    out |= self.key_patterns(v, info, _depth + 1)
+                return out
+        if isinstance(e, (ast.Name, ast.Attribute)):
+            c = self.module_str_constant(info.module, e, info)
+            if c is not None:
+                return {c}
+        return {"?"}
+
+    def module_str_constant(self, module, e, info=None, _depth=0):
+        """The string value of a module-level constant (`KEY = "..."`, also imported), else None."""
+        q = self._resolve_static(module, e, info) if isinstance(e, (ast.Name, ast.Attribute)) else None
+        if not q or _depth > 3:
+            return None
+        m, rest = self.p.module_prefix(q)
+        if not m or len(rest) != 1:
+            return None
+        vals = []
+        for st in self.p._top_level_statements(self.p.modules[m].tree.body):
+            if isinstance(st, ast.Assign) and any(isinstance(t, ast.Name) and t.id == rest[0] for t in st.targets):
+                vals.append(st.value)
+            elif isinstance(st, ast.AnnAssign) and isinstance(st.target, ast.Name) and st.target.id == rest[0] \
+                    and st.value is not None:
+                vals.append(st.value)
+        if len(vals) != 1:
+            return None
+        v = vals[0]
+        if isinstance(v, ast.Constant) and isinstance(v.value, str):
+            return v.value
+        if isinstance(v, (ast.Name, ast.Attribute)):
+            return self.module_str_constant(m, v, None, _depth + 1)
+        return None
+
+    @staticmethod
+    def pattern_usable(pat) -> bool:
+        """A pattern names a key only if it has some constant text (a key that is entirely computed matches
+        nothing)."""
+        return pat != "?" and len(pat.replace("{}", "")) >= 3
+
+    def session_key_read(self, e, info) -> set:
+        """Key patterns read by `sess.get(K)` / `sess.pop(K)` / `sess[K]` (sess: a session, alias or store)."""
+        if isinstance(e, ast.Call) and isinstance(e.func, ast.Attribute) and e.func.attr in ("get", "pop") and \
+                e.args and self.is_session_expr(e.func.value, info):
+            return {k for k in self.key_patterns(e.args[0], info) if self.pattern_usable(k)}
+        if isinstance(e, ast.Subscript) and isinstance(e.ctx, ast.Load) and self.is_session_expr(e.value, info):
+            return {k for k in self.key_patterns(e.slice, info) if self.pattern_usable(k)}
+        return set()
+
+    def principal_models(self) -> set:
+        """(v6) Project models looked up by a key read from the session (`Customer.objects.get(pk=session[K])`,
+        also through a reverse relation `org.customers.get(...)`): the second kinds of principal the project
+        authenticates (reported in the coverage; not used to accept weak credential words: an order linked to a
+        customer is not a credential holder)."""
+        self.auth_session_keys()
+        return self.__dict__.get("_principal_models", set())
+
     def auth_session_keys(self) -> dict:
-        """{session key: [functions that use it to load a principal]}: a value read from `x.session.get(K)` /
-        `x.session[K]` that (directly or through a local variable) is a `pk=` / `id=` / `*_id=` lookup argument
+        """{session key pattern: [functions that use it to load a principal]}: a value read from `x.session.get(K)`
+        / `x.session[K]` (also through a session alias or a SessionStore object, and with a computed key, see
+        key_patterns) that (directly or through a local variable) is a `pk=` / `id=` / `*_id=` lookup argument
         is how the project authenticates a second kind of principal (`request.customer = Customer.objects
         .filter(pk=request.session.get("customer_id")).first()`).  Django's own SESSION_KEY is always one."""
         hit = getattr(self, "_auth_session_keys", None)
         if hit is not None:
             return hit
         out = {"_auth_user_id": ["django.contrib.auth (SESSION_KEY written without login())"]}
-
-        def session_key_read(e):
-            if isinstance(e, ast.Call) and isinstance(e.func, ast.Attribute) and e.func.attr in ("get", "pop") and \
-                    isinstance(e.func.value, ast.Attribute) and e.func.value.attr == "session" and e.args and \
-                    isinstance(e.args[0], ast.Constant) and isinstance(e.args[0].value, str):
-                return e.args[0].value
-            if isinstance(e, ast.Subscript) and isinstance(e.ctx, ast.Load) and isinstance(e.value, ast.Attribute) \
-                    and e.value.attr == "session" and isinstance(e.slice, ast.Constant) and \
-                    isinstance(e.slice.value, str):
-                return e.slice.value
-            return None
+        principals = set()
+        self._auth_session_keys = out          # recursion guard (related_models -> is_model only)
         for qn, info in self.p.functions.items():
-            body = list(self.p.walk_function_body(info.node))
-            if not any(isinstance(n, ast.Attribute) and n.attr == "session" for n in body):
+            if not self.mentions(info) & {"session", "SessionStore"}:
                 continue
+            body = list(self.p.walk_function_body(info.node))
             held = {}
             for n in body:
                 if isinstance(n, ast.Assign):
-                    ks = {session_key_read(x) for x in ast.walk(n.value)} - {None}
+                    ks = set()
+                    for x in ast.walk(n.value):
+                        ks |= self.session_key_read(x, info)
                     for tg in n.targets:
                         if isinstance(tg, ast.Name) and ks:
                             held.setdefault(tg.id, set()).update(ks)
@@ -692,27 +894,183 @@ class CredentialHeuristics:
                 for k in n.keywords:
                     if not k.arg or not (k.arg in ("pk", "id") or k.arg.endswith(("_id", "_pk", "__pk", "__id"))):
                         continue
-                    ks = {session_key_read(x) for x in ast.walk(k.value)} - {None}
+                    ks = set()
+                    for x in ast.walk(k.value):
+                        ks |= self.session_key_read(x, info)
                     ks |= {kk for x in ast.walk(k.value) if isinstance(x, ast.Name) for kk in held.get(x.id, ())}
                     for key in ks:
                         if qn not in out.setdefault(key, []):
                             out[key].append(qn)
-        self._auth_session_keys = out
+                    if ks and k.arg in ("pk", "id"):
+                        m = self._lookup_model(n.func, info)
+                        if m:
+                            principals.add(m)
+        self._principal_models = principals
+        return out
+
+    def _lookup_model(self, f, info):
+        """The project model a `.get/.filter(...)` lookup reads: `M.objects.get`, `<x>.<reverse accessor>.get`."""
+        v = f.value if isinstance(f, ast.Attribute) else None
+        while isinstance(v, (ast.Call, ast.Attribute)):
+            if isinstance(v, ast.Attribute) and v.attr in MANAGER_ATTRS:
+                m = self._resolve_static(info.module, v.value, info)
+                return m if m and self.is_model(m) else None
+            if isinstance(v, ast.Attribute):
+                ms = self.related_models(v.attr)
+                if len(ms) == 1:
+                    return ms[0]
+                v = v.value
+                continue
+            v = v.func
+        return None
+
+    def session_writes(self, info) -> list:
+        """[(statement, key expression, value expression)] for `sess[K] = V` / `sess.setdefault(K, V)` /
+        `sess.update({K: V})` in a function (sess: a session, alias or SessionStore object)."""
+        out = []
+        if not self.mentions(info) & {"session", "SessionStore"}:
+            return out
+        for n in self.p.walk_function_body(info.node):
+            if isinstance(n, (ast.Assign, ast.AugAssign, ast.AnnAssign)):
+                tgts = n.targets if isinstance(n, ast.Assign) else [n.target]
+                for tg in tgts:
+                    if isinstance(tg, ast.Subscript) and self.is_session_expr(tg.value, info) and n.value is not None:
+                        out.append((n, tg.slice, n.value))
+            elif isinstance(n, ast.Expr) and isinstance(n.value, ast.Call) and \
+                    isinstance(n.value.func, ast.Attribute) and self.is_session_expr(n.value.func.value, info):
+                c = n.value
+                if c.func.attr == "setdefault" and len(c.args) >= 2:
+                    out.append((n, c.args[0], c.args[1]))
+                elif c.func.attr == "update" and c.args and isinstance(c.args[0], ast.Dict):
+                    for k, v in zip(c.args[0].keys, c.args[0].values):
+                        if k is not None:
+                            out.append((n, k, v))
         return out
 
     def session_login_stores(self, qn) -> list:
         """[(statement, key, consumers)]: `x.session[K] = v` in `qn` where K is an authentication session key."""
         keys = self.auth_session_keys()
+        info = self.p.functions[qn]
         out = []
-        for n in self.p.walk_function_body(self.p.functions[qn].node):
-            if isinstance(n, (ast.Assign, ast.AugAssign, ast.AnnAssign)):
-                tgts = n.targets if isinstance(n, ast.Assign) else [n.target]
-                for tg in tgts:
-                    if isinstance(tg, ast.Subscript) and isinstance(tg.value, ast.Attribute) and \
-                            tg.value.attr == "session" and isinstance(tg.slice, ast.Constant) and \
-                            tg.slice.value in keys:
-                        out.append((n, tg.slice.value, keys[tg.slice.value]))
+        for st, kexpr, _v in self.session_writes(info):
+            for k in sorted(self.key_patterns(kexpr, info)):
+                if k in keys and (self.pattern_usable(k) or k == "_auth_user_id"):
+                    out.append((st, k, keys[k]))
+                    break
         return out
+
+    # ------------------------------------------------------------------ (v6) generic signing / JWT primitives
+    PRINCIPAL_NOUNS = {"user", "users", "customer", "member", "account", "principal", "owner", "staff", "admin"}
+    PRINCIPAL_ATTRS = {"pk", "id", "email", "username", "uuid"}
+    STRING_BUILDERS = {"str", "quote", "quote_plus", "urlencode", "format", "join", "encode", "decode"}
+
+    def signed_value_decision(self, site):
+        """(v6) A generic signing / JWT primitive (`signing.dumps`, `Signer.sign`, `jwt.encode` ...) is a credential
+        mint only when its value is kept where a credential is (a name with a STRONG credential word: returned
+        from `make_token`, stored as `login_token`, passed as `token=`), or when it signs an identifier of a
+        principal (`{"user": user.pk}`, `request.user.email`): an identity assertion.  Signed URLs, form state,
+        CSRF-like challenges, outbound assertions and signed ids of other objects are set aside (listed in
+        coverage.custom_credentials.set_aside).  -> (purpose, why) | (None, reason)"""
+        memo = self.__dict__.setdefault("_signed_memo", {})
+        key = id(site.node)
+        if key in memo:
+            return memo[key]
+        info = self.p.functions[site.func]
+        call = site.node
+        names = self._kept_names(info, call)
+        sink = Sink("signed", info.qualname, site.line, names, [], frozenset(), f"{site.text}(...)")
+        purpose, reason = self.decide(sink, strong_only=True) if names else (None, "value not kept under a name")
+        out = (purpose, f"signed value kept as {names}") if purpose else None
+        if out is None:
+            ident = self._principal_payload(call, info)
+            if ident:
+                out = (GENERIC_PURPOSE, f"signs a principal identifier ({ident})")
+        if out is None:
+            out = (None, f"{reason}; the signed payload names no principal identifier")
+            self.rejected.append(dict(function=info.qualname, line=site.line, source=site.text,
+                                      reasons=[f"generic signing primitive: {out[1]}"]))
+        memo[key] = out
+        return out
+
+    def _parents(self, info) -> dict:
+        memo = self.__dict__.setdefault("_parent_maps", {})
+        hit = memo.get(info.qualname)
+        if hit is None:
+            hit = {}
+            for n in self.p.walk_function_body(info.node):
+                for ch in ast.iter_child_nodes(n):
+                    hit[id(ch)] = n
+            memo[info.qualname] = hit
+        return hit
+
+    def _kept_names(self, info, call, _depth=0) -> list:
+        """Names of the places a call's value is kept: assignment targets, the enclosing function when it is
+        returned, keyword / dict-key names, the callee it is handed to (through string building)."""
+        par = self._parents(info)
+        node, names = call, []
+        for _ in range(8):
+            up = par.get(id(node))
+            if up is None:
+                break
+            if isinstance(up, (ast.BinOp, ast.JoinedStr, ast.FormattedValue)) or (
+                    isinstance(up, ast.Call) and node in up.args and _leaf(up.func) in self.STRING_BUILDERS):
+                node = up
+                continue
+            if isinstance(up, (ast.Assign, ast.AnnAssign, ast.AugAssign)):
+                tgts = up.targets if isinstance(up, ast.Assign) else [up.target]
+                for t in tgts:
+                    if isinstance(t, ast.Name):
+                        names.append(t.id)
+                        if _depth == 0:
+                            names += self._uses_of(info, t.id)
+                    elif isinstance(t, ast.Attribute):
+                        names.append(t.attr)
+                    elif isinstance(t, ast.Subscript) and isinstance(t.slice, ast.Constant) and \
+                            isinstance(t.slice.value, str):
+                        names.append(t.slice.value)
+            elif isinstance(up, ast.Return):
+                names.append(info.qualname.rsplit(".", 1)[-1])
+            elif isinstance(up, ast.keyword) and up.arg:
+                names.append(up.arg)
+            elif isinstance(up, ast.Dict):
+                for k, v in zip(up.keys, up.values):
+                    if v is node and isinstance(k, ast.Constant) and isinstance(k.value, str):
+                        names.append(k.value)
+            elif isinstance(up, ast.Call):
+                leaf = _leaf(up.func)
+                if leaf in ("set_cookie", "set_signed_cookie") and up.args and up.args[0] is not node:
+                    k0 = up.args[0]
+                    c = k0.value if isinstance(k0, ast.Constant) and isinstance(k0.value, str) else \
+                        self.module_str_constant(info.module, k0, info)
+                    names.append(c or _leaf(k0) if isinstance(k0, (ast.Name, ast.Attribute)) else (c or "cookie"))
+                elif leaf:
+                    names.append(leaf)
+            break
+        return [n for n in names if n]
+
+    def _uses_of(self, info, var) -> list:
+        """Where a local holding the value goes next (one level): returned, a keyword, a dict key, a callee."""
+        out = []
+        for n in self.p.walk_function_body(info.node):
+            if isinstance(n, ast.Name) and n.id == var and isinstance(n.ctx, ast.Load):
+                out += [x for x in self._kept_names(info, n, _depth=1) if x != var]
+        return out
+
+    def _principal_payload(self, call, info):
+        if not call.args:
+            return None
+        for n in ast.walk(call.args[0]):
+            if isinstance(n, ast.Attribute) and n.attr in self.PRINCIPAL_ATTRS:
+                base = n.value
+                chain = []
+                while isinstance(base, ast.Attribute):
+                    chain.append(base.attr)
+                    base = base.value
+                if isinstance(base, ast.Name):
+                    chain.append(base.id)
+                if any(words(c) & self.PRINCIPAL_NOUNS for c in chain):
+                    return _u(n)
+        return None
 
     # ------------------------------------------------------------------ label expansion
     def sources_of(self, labels, _seen=None) -> set:
@@ -967,7 +1325,7 @@ class CredentialHeuristics:
                     return g
             return None
         q = self._resolve_static(module, d)
-        if q in SOURCES:
+        if q in SOURCES or q in self.a.catalog.secret_generators:
             return q
         if q in self.p.functions and self.sources_of(self.fn(q).returns):
             return q
@@ -1056,6 +1414,13 @@ UNUSABLE_PASSWORD_CALLS = {"set_password", "make_password"}
 ESCAPE_CALLS = {"bulk_create", "abulk_create", "append", "extend", "add", "insert", "save", "create"}
 TRANSFORM_LEAVES = {"hex", "lower", "upper", "decode", "encode", "strip", "replace", "join", "hexlify", "b64encode",
                     "urlsafe_b64encode", "zfill"}
+
+
+RELATION_FIELDS = {"ForeignKey", "OneToOneField", "ManyToManyField", "ParentalKey"}
+
+
+def _leaf(f) -> str:
+    return f.attr if isinstance(f, ast.Attribute) else (f.id if isinstance(f, ast.Name) else "")
 
 
 def _head(name: str) -> str:

@@ -4,4 +4,4 @@ from django.test import TestCase
 
 class ShopTestCase(TestCase):
     def make_link(self):
-        return signing.dumps({"u": 1})
+        return signing.dumps({"u": self.user.pk})

@@ -12,6 +12,10 @@ Exit-code bits returned by diff():
   (v5, R7) a settings group entry (`settings:<group>`) that is new, removed or changed sets bit 4 once, with the
   changed settings named in the finding; an unaccepted unchanged group sets bit 64
   128  (CLI) usage / input error
+  (v6) candidate groups (`candidates:<kind>`, one lock entry per kind listing its member SITES): a new member sets
+  bit 1, a member no longer found bit 2, a member whose fingerprint (code, checks, settings, entry points that reach
+  it ...) changed bit 4; an unaccepted unchanged group sets bit 64.  Findings name the member and carry
+  `tier: "candidate"`.
 """
 from __future__ import annotations
 
@@ -86,12 +90,40 @@ def _lock_tool(tool: dict) -> dict:
     return out
 
 
+def _candidate_member(c: dict) -> dict:
+    site = c["mint"].get("site") or {}
+    return dict(site=f"{site.get('function') or c['entry']['view']}",
+                line=site.get("line"),
+                file=site.get("file"), mint=c["mint"]["api"], purpose=c["mint"]["purpose"],
+                rank=c["candidate"]["rank"], reason=c["candidate"]["reason"],
+                reached_from=list(c["entry"].get("reached_from") or []), status=c["evidence"]["status"],
+                fingerprint=c["fingerprint"]["overall"], components=c["fingerprint"]["components"],
+                gaps=c["gaps"], analysis_complete=c["analysis_complete"])
+
+
+def _lock_candidates(report: dict) -> list:
+    """(v6) One lock entry per candidate kind; each member is one candidate site (see candidates.py)."""
+    from .fingerprint import digest
+    groups: dict = {}
+    for c in report.get("candidates", []):
+        grp = c["candidate"]["group"]
+        g = groups.setdefault(grp, dict(id=f"candidates:{grp}", kind="candidate_group", group=grp, members={}))
+        g["members"][c["id"]] = _candidate_member(c)
+    out = []
+    for grp, g in sorted(groups.items()):
+        g["fingerprint"] = dict(overall=digest(sorted(f"{mid}={m['fingerprint']}" for mid, m in g["members"].items())))
+        out.append(dict(g, review_status="unreviewed", policy_note="", reviewer=""))
+    return out
+
+
 def build_lock(report: dict) -> dict:
     return dict(mintmap_lock_version=LOCK_VERSION, tool=_lock_tool(report["tool"]), project=report["project"],
                 coverage=_lock_coverage(report["coverage"]),
                 # (v5, R7) global auth settings: one reviewable entry per group (not hashed into every path)
                 settings=[_lock_settings(g) for g in report.get("settings_groups", [])],
-                paths=[_lock_path(p) for p in report["paths"]])
+                paths=[_lock_path(p) for p in report["paths"]],
+                # (v6) candidate tier: one entry per kind, members = candidate sites
+                candidates=_lock_candidates(report))
 
 
 def _cut(v, n=160) -> str:
@@ -147,6 +179,17 @@ def merge_lock(old: dict, report: dict) -> tuple[dict, list]:
             notes.append(f"{g['id']} changed: review reset to unreviewed")
         else:
             notes.append(f"new {g['id']} (unreviewed)")
+    old_c = {g["id"]: g for g in old.get("candidates", [])}
+    for g in new["candidates"]:
+        o = old_c.get(g["id"])
+        if o and o["fingerprint"]["overall"] == g["fingerprint"]["overall"]:
+            for f in REVIEW_FIELDS:
+                g[f] = o.get(f, g[f])
+        elif o:
+            g["previous_review"] = {f: o.get(f) for f in REVIEW_FIELDS}
+            notes.append(f"{g['id']} changed: review reset to unreviewed")
+        else:
+            notes.append(f"new {g['id']} with {len(g['members'])} candidate site(s) (unreviewed)")
     for p in new["paths"]:
         o = old_by_id.get(p["id"])
         if not o:
@@ -244,6 +287,37 @@ def diff(lock: dict, report: dict) -> tuple[list, int]:
                 components=["settings"])
         elif o.get("review_status") != "accepted":
             add(UNREVIEWED, gid, f"settings group not accepted (review_status={o.get('review_status')!r})")
+    # (v6) candidate groups: findings per member site
+    old_c = {g["id"]: g for g in lock.get("candidates", [])}
+    cur_c = {g["id"]: g for g in build_lock(report)["candidates"]}
+    for gid in sorted(set(cur_c) | set(old_c)):
+        o, n = old_c.get(gid), cur_c.get(gid)
+        om, nm = (o or {}).get("members", {}), (n or {}).get("members", {})
+        before = len(findings)
+        for mid in sorted(set(nm) - set(om)):
+            m = nm[mid]
+            add(NEW_PATH, mid, f"new candidate ({gid}, {m['rank']}): {m['site']} -> {m['mint']}; reached from "
+                               f"{len(m['reached_from'])} entry point(s) {_cut(', '.join(m['reached_from']), 200)}; "
+                               f"{_cut(m['reason'], 300)}", tier="candidate", group=gid)
+        for mid in sorted(set(om) - set(nm)):
+            m = om[mid]
+            add(REMOVED_PATH, mid, f"candidate no longer found ({gid}): {m['site']} -> {m['mint']} (code removed, "
+                                   f"or the analysis can no longer see it)", tier="candidate", group=gid)
+        for mid in sorted(set(om) & set(nm)):
+            a, b = om[mid], nm[mid]
+            if a["fingerprint"] == b["fingerprint"]:
+                continue
+            comps = sorted(k for k in b["components"] if a["components"].get(k) != b["components"][k])
+            gained = sorted(set(b["reached_from"]) - set(a["reached_from"]))
+            lost = sorted(set(a["reached_from"]) - set(b["reached_from"]))
+            extra = "".join([f"; now also reached from {_cut(', '.join(gained), 300)}" if gained else "",
+                             f"; no longer reached from {_cut(', '.join(lost), 300)}" if lost else ""])
+            add(FINGERPRINT_CHANGED, mid, f"candidate {m_site(b)} ({gid}) changed ({', '.join(comps)}){extra}; "
+                                          f"previous review of {gid} ({(o or {}).get('review_status')}) no longer "
+                                          f"applies", components=comps, tier="candidate", group=gid)
+        if len(findings) == before and o is not None and nm and o.get("review_status") != "accepted":
+            add(UNREVIEWED, gid, f"candidate group not accepted (review_status={o.get('review_status')!r}, "
+                                 f"{len(nm)} site(s))", tier="candidate", group=gid)
     # coverage
     oc, nc = lock.get("coverage", {}), _lock_coverage(report["coverage"])
     if nc["files_parsed"] < oc.get("files_parsed", 0):
@@ -287,6 +361,10 @@ def diff(lock: dict, report: dict) -> tuple[list, int]:
             f"to be the same on every supported version (tested on 3.11-3.13); if most paths report "
             f"fingerprint_changed without a code change, run MintMap with Python {lock_py}")))
     return findings, code
+
+
+def m_site(m: dict) -> str:
+    return f"{m['site']} -> {m['mint']}"
 
 
 def dump(obj) -> str:
