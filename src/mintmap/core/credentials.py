@@ -1059,7 +1059,10 @@ class CredentialHeuristics:
     def _principal_payload(self, call, info):
         if not call.args:
             return None
-        for n in ast.walk(call.args[0]):
+        roots = [call.args[0]]
+        if isinstance(call.args[0], ast.Name):        # `payload = {...}; signer.sign_object(payload)`
+            roots += self.local_assignments(info).get(call.args[0].id, [])
+        for n in (x for r in roots for x in ast.walk(r)):
             if isinstance(n, ast.Attribute) and n.attr in self.PRINCIPAL_ATTRS:
                 base = n.value
                 chain = []

@@ -769,6 +769,42 @@ class SignedValueTests(unittest.TestCase):
         self.assertTrue(any(x["function"].endswith("order_link") for x in aside), aside)
 
 
+class SignedStateTests(unittest.TestCase):
+    def test_signed_step_up_marker_and_payload_through_a_local(self):
+        files = {"conf/urls.py": """\
+                    from django.urls import path
+                    from club import step
+                    urlpatterns = [path("sudo/", step.enter_sudo), path("mail/", step.mail_link),
+                                   path("done/", step.done)]
+                 """, "club/step.py": """\
+                    from django.core.signing import TimestampSigner
+                    from django.http import HttpResponse
+
+
+                    def enter_sudo(request):
+                        if request.POST.get("code") != request.session.get("expected"):
+                            return HttpResponse(status=403)
+                        request.session["sudo"] = TimestampSigner().sign("active")
+                        return HttpResponse("ok")
+
+
+                    def mail_link(request):
+                        payload = {"u": request.user.username, "e": request.POST["email"]}
+                        signed = TimestampSigner().sign_object(payload)
+                        return HttpResponse(signed)
+
+
+                    def done(request):
+                        request.session["changed_password"] = True
+                        return HttpResponse("ok")
+                 """}
+        rep = scan(project(self, files, init=("conf", "club")))
+        c = cand_for(self, rep, "enter_sudo", "session_state")
+        self.assertIn("signed", c["candidate"]["signals"])
+        one_path(self, rep, "route:mail/")
+        self.assertFalse([c for c in cands(rep) if "done" in c["entry"]["id"]])
+
+
 # ============================================================================ receivers, admin passwords, generators
 RECEIVER_MODELS = """\
 import secrets

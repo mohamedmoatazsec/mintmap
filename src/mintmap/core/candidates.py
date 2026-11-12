@@ -57,11 +57,14 @@ NOT_AUTH_STATE_WORDS = {
     "captcha", "csrf", "nonce", "state", "search", "filter", "sort", "page", "form", "wizard", "draft", "preview",
     "tmp", "temp", "cache", "notification", "notifications", "banner", "tour", "consent", "cookie", "attempts",
     "count", "counter", "agent", "country", "ip", "geo", "timezone", "tz", "expiry", "expires", "age", "scope",
-    "last", "seen", "activity", "visit", "visited"}
+    "last", "seen", "activity", "visit", "visited",
+    # one-shot UI notices ("show the 'password changed' banner")
+    "enabled", "disabled", "changed", "show", "shown", "display", "success", "notice", "notify", "flash", "toast"}
 # words of a model name that mark a log / file / cache record rather than an elevation bound to the session
 NOT_BOUND_RECORD_WORDS = {"audit", "log", "logs", "history", "file", "files", "cached", "cache", "export", "download",
                           "upload", "report", "event", "events", "notification"}
 REKEY_LEAVES = {"cycle_key", "flush", "acycle_key", "aflush"}
+SIGNING_LEAVES = {"sign", "sign_object", "dumps", "encode"}
 TIME_LEAVES = {"time", "now", "timestamp", "monotonic", "utcnow", "time_ns"}
 # request-taking library functions that only read or build objects (accessors, predicates, loaders)
 ACCESSOR_PREFIXES = ("get_", "is_", "has_", "load_", "build_", "reverse", "render", "format_", "can_", "should_",
@@ -136,6 +139,8 @@ class CandidateFinder:
                     sig.add("session_value")
                 elif "hash" in leaf or "hmac" in leaf:
                     sig.add("auth_hash")
+                elif leaf in SIGNING_LEAVES:
+                    sig.add("signed")       # a signed value kept in the session (`sudo = signer.sign("active")`)
                 elif leaf in TIME_LEAVES:
                     sig.add("timestamp")
             elif isinstance(n, ast.Subscript) and isinstance(n.ctx, ast.Load) and \
@@ -212,7 +217,7 @@ class CandidateFinder:
                 rank = "high"
             elif rekey and (vsig & {"principal", "auth_hash"} or auth):
                 rank = "high"
-            elif auth and not neg and vsig & {"principal", "auth_hash", "timestamp", "flag"}:
+            elif auth and not neg and vsig & {"principal", "auth_hash", "timestamp", "flag", "signed"}:
                 rank = "medium"
             else:
                 key = (info.qualname, st.lineno)
