@@ -2748,5 +2748,159 @@
    "added_in": "v6"
   }
  ],
- "library_secret_generators_note": "(v6) Library functions whose return value is a freshly generated secret. The custom-credential heuristic treats a call to one like a randomness source: where its value is kept decides whether it is reported."
+ "library_secret_generators_note": "(v6) Library functions whose return value is a freshly generated secret. The custom-credential heuristic treats a call to one like a randomness source: where its value is kept decides whether it is reported.",
+ "library_flow_conditions": [
+  {
+   "include": "allauth.urls",
+   "mint_refs": [
+    "allauth.account.internal.flows.login.perform_login / resume_login",
+    "allauth.account.stages.LoginStageController.handle + internal.stagekit.stash_login",
+    "allauth.account.internal.flows.login_by_code.LoginCodeVerificationProcess.finish",
+    "allauth.account.internal.flows.password_reset.perform_password_reset_login",
+    "allauth password-reset key generation",
+    "allauth.account.internal.flows.signup.complete_signup",
+    "allauth.account.internal.flows.email_verification.login_on_verification",
+    "allauth.account.internal.flows.password_change.logout_on_password_change",
+    "allauth.mfa.stages.AuthenticateStage.handle",
+    "allauth.mfa.base.views.AuthenticateView.form_valid",
+    "allauth.mfa.webauthn.internal.flows.perform_passwordless_login",
+    "allauth.mfa.internal.flows.trust.trust_browser"
+   ],
+   "enabled_if_any": [
+    {
+     "setting": "HEADLESS_ONLY",
+     "default": false,
+     "when": "falsy"
+    }
+   ],
+   "source_location": "django_allauth/allauth/urls.py:32-35; django_allauth/allauth/app_settings.py:49-52",
+   "evidence": "allauth.urls includes allauth.account.urls and allauth.mfa.urls only `if not app_settings.HEADLESS_ONLY` (get_setting('HEADLESS_ONLY', False)); with HEADLESS_ONLY the include routes only the social provider callbacks (urls.py:67-68)",
+   "verified_version": "django-allauth 65.20.0",
+   "added_in": "v6"
+  },
+  {
+   "include": "allauth.urls",
+   "mint_refs": [
+    "allauth.mfa.stages.AuthenticateStage.handle",
+    "allauth.mfa.base.views.AuthenticateView.form_valid",
+    "allauth.mfa.webauthn.internal.flows.perform_passwordless_login",
+    "allauth.mfa.internal.flows.trust.trust_browser"
+   ],
+   "enabled_if_any": [
+    {
+     "installed_app": "allauth.mfa"
+    }
+   ],
+   "source_location": "django_allauth/allauth/app_settings.py:37-38; django_allauth/allauth/urls.py:34-35; django_allauth/allauth/account/adapter.py:875-878",
+   "evidence": "MFA_ENABLED is apps.is_installed('allauth.mfa'): allauth.urls includes the MFA URLs and the adapter adds the MFA login stages only then",
+   "verified_version": "django-allauth 65.20.0",
+   "added_in": "v6"
+  },
+  {
+   "include": "allauth.urls",
+   "mint_refs": [
+    "allauth.socialaccount.internal.flows.login._login"
+   ],
+   "enabled_if_any": [
+    {
+     "installed_app": "allauth.socialaccount"
+    }
+   ],
+   "source_location": "django_allauth/allauth/app_settings.py:27-28; django_allauth/allauth/urls.py:37-38,67-68",
+   "evidence": "SOCIALACCOUNT_ENABLED is apps.is_installed('allauth.socialaccount'): allauth.urls routes the social account and provider URLs only then",
+   "verified_version": "django-allauth 65.20.0",
+   "added_in": "v6"
+  },
+  {
+   "mint_refs": [
+    "allauth.account.internal.flows.password_reset.perform_password_reset_login"
+   ],
+   "enabled_if_any": [
+    {
+     "setting": "ACCOUNT_LOGIN_ON_PASSWORD_RESET",
+     "default": false,
+     "when": "truthy"
+    }
+   ],
+   "source_location": "django_allauth/allauth/account/internal/flows/password_reset.py:61-62; django_allauth/allauth/account/app_settings.py:417-422",
+   "evidence": "finalize_password_reset calls perform_password_reset_login (its only caller) only `if app_settings.LOGIN_ON_PASSWORD_RESET` (default False)",
+   "verified_version": "django-allauth 65.20.0",
+   "added_in": "v6"
+  },
+  {
+   "mint_refs": [
+    "allauth.account.internal.flows.email_verification.login_on_verification"
+   ],
+   "enabled_if_any": [
+    {
+     "setting": "ACCOUNT_LOGIN_ON_EMAIL_CONFIRMATION",
+     "default": false,
+     "when": "truthy"
+    },
+    {
+     "setting": "ACCOUNT_EMAIL_VERIFICATION_BY_CODE_ENABLED",
+     "default": false,
+     "when": "truthy"
+    }
+   ],
+   "source_location": "django_allauth/allauth/account/internal/flows/email_verification.py:133-146; django_allauth/allauth/account/app_settings.py:110-111,410-414",
+   "evidence": "login_on_verification aborts without logging in when neither LOGIN_ON_EMAIL_CONFIRMATION nor EMAIL_VERIFICATION_BY_CODE_ENABLED is set (both default False)",
+   "verified_version": "django-allauth 65.20.0",
+   "added_in": "v6"
+  },
+  {
+   "mint_refs": [
+    "allauth.account.internal.flows.password_change.logout_on_password_change"
+   ],
+   "enabled_if_any": [
+    {
+     "setting": "ACCOUNT_LOGOUT_ON_PASSWORD_CHANGE",
+     "default": false,
+     "when": "falsy"
+    }
+   ],
+   "source_location": "django_allauth/allauth/account/internal/flows/password_change.py:50-52; django_allauth/allauth/account/app_settings.py:435-436",
+   "evidence": "update_session_auth_hash is called only `if not app_settings.LOGOUT_ON_PASSWORD_CHANGE`; otherwise the session is logged out",
+   "verified_version": "django-allauth 65.20.0",
+   "added_in": "v6"
+  },
+  {
+   "mint_refs": [
+    "allauth.mfa.webauthn.internal.flows.perform_passwordless_login"
+   ],
+   "enabled_if_any": [
+    {
+     "setting": "MFA_PASSKEY_LOGIN_ENABLED",
+     "default": false,
+     "when": "truthy"
+    }
+   ],
+   "source_location": "django_allauth/allauth/mfa/webauthn/urls.py:34-35; django_allauth/allauth/headless/mfa/urls.py:73; django_allauth/allauth/mfa/app_settings.py:102-105",
+   "evidence": "perform_passwordless_login is called by the passkey login views (mfa/webauthn/views.py:139, headless/mfa/views.py:249), which are routed only when PASSKEY_LOGIN_ENABLED (default False)",
+   "verified_version": "django-allauth 65.20.0",
+   "added_in": "v6"
+  },
+  {
+   "mint_refs": [
+    "allauth.mfa.internal.flows.trust.trust_browser"
+   ],
+   "enabled_if_any": [
+    {
+     "setting": "MFA_TRUST_ENABLED",
+     "default": false,
+     "when": "truthy"
+    },
+    {
+     "setting": "ACCOUNT_LOGIN_BY_CODE_TRUST_ENABLED",
+     "default": false,
+     "when": "truthy"
+    }
+   ],
+   "source_location": "django_allauth/allauth/mfa/app_settings.py:114-122; django_allauth/allauth/account/adapter.py:879-880; django_allauth/allauth/mfa/base/views.py:175-188",
+   "evidence": "trust_browser is called by the trust views, which require the TrustStage; the stage is added only when _TRUST_STAGE_ENABLED (MFA_TRUST_ENABLED or ACCOUNT_LOGIN_BY_CODE_TRUST_ENABLED, both default False)",
+   "verified_version": "django-allauth 65.20.0",
+   "added_in": "v6"
+  }
+ ],
+ "library_flow_conditions_note": "(v6) A catalogued library flow whose enabling condition is statically false in the project's settings (every settings module and branch evaluated, the setting absent -> the library default) is not a path; it is listed in coverage.library_flows_disabled_by_settings, and enabling it later is a new path. Unknown values keep the flow. Rows with `include` apply only to that URLconf include."
 }

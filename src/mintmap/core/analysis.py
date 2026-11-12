@@ -207,6 +207,7 @@ class Analysis:
         self._admin_info = None
         self._settings_groups = None     # (v5, R7)
         self._hooks = None               # (v5, R5)
+        self.disabled_flows: dict = {}   # (v6) (entry id, mint ref) -> why the settings switch the flow off
         self._settings_reads: dict = {}
         self.fp_depth = fp_depth
         self.chain_limit = chain_limit
@@ -885,11 +886,25 @@ class Analysis:
         # has it, every variant's gaps are reported and every variant's route code is fingerprinted.  The
         # displayed route (and its shadowing) is the occurrence that is not shadowed and not conditional
         # if there is one.
+        # (v6) URL-prefix twins: `if not PREFIX: urlpatterns = x` / `else: urlpatterns = [path(PREFIX, include(x))]`
+        # gives every route twice, once under a prefix chosen at run time.  A conditional prefixed occurrence whose
+        # un-prefixed pattern is also routed (conditionally) to the same target is an occurrence of that entry (a
+        # variant if it runs other code), not a second entry: the same code would otherwise be reviewed twice.
+        # Unconditional twins (`i18n_patterns` next to plain routes) are both reachable and stay two entries.
         groups: dict = {}
+        plain = {(r.pattern, r.target) for r in routes if r.conditional}
+        twins: dict = {}
         for r in routes:
-            groups.setdefault(f"route:{r.pattern}|{r.target}", []).append(r)
+            base = _runtime_prefix_base(r.pattern) if r.conditional else None
+            if base is not None and (base, r.target) in plain:
+                eid = f"route:{base}|{r.target}"
+                twins.setdefault(eid, []).append(r.pattern)
+            else:
+                eid = f"route:{r.pattern}|{r.target}"
+            groups.setdefault(eid, []).append(r)
         for eid, rs in groups.items():
-            chosen = min(rs, key=lambda r: (bool(r.shadowed_by), bool(r.may_be_shadowed_by), r.conditional))
+            chosen = min(rs, key=lambda r: (bool(r.shadowed_by), bool(r.may_be_shadowed_by), r.conditional,
+                                            f"route:{r.pattern}|{r.target}" != eid))
             variants, seen = [], {self._variant_key(chosen)}
             for r in rs:
                 k = self._variant_key(r)
@@ -897,6 +912,9 @@ class Analysis:
                     seen.add(k)
                     variants.append(r)
             e = Entry(id=eid, kind="route", view=chosen.target, route=chosen, variants=variants)
+            if eid in twins:
+                e.notes.append(f"also routed under a run-time URL prefix ({', '.join(sorted(set(twins[eid])))}): "
+                               f"one entry stands for both occurrences")
             r = chosen
             if r.shadowed_by:
                 sb = r.shadowed_by
@@ -915,6 +933,11 @@ class Analysis:
                     if f not in e.funcs:
                         e.funcs.append(f)
                 for m in part.library_mints:
+                    why = self.flow_disabled(m[0], v.target if v.kind == "library_include" else None)
+                    if why:
+                        # (v6) the library flow is switched off by the project's settings: not a path, but listed
+                        self.disabled_flows.setdefault((eid, m[0].ref or m[0].symbol), why)
+                        continue
                     if all((m[0].symbol, m[0].ref) != (x[0].symbol, x[0].ref) for x in e.library_mints):
                         e.library_mints.append(m)
                 for n in part.notes:
@@ -1014,6 +1037,56 @@ class Analysis:
                 # (v5, R2d) also for catalogued packages
                 self.gaps.append(Gap("drf_auth_class_not_in_catalog", "-", "DEFAULT_AUTHENTICATION_CLASSES", ac))
         return entries
+
+    # (v6) settings gaps after which an ABSENT setting may still be assigned somewhere MintMap did not evaluate
+    SETTINGS_MAY_ASSIGN_ANY = {"settings_star_import_unresolved", "dynamic_setting", "no_settings_module",
+                               "settings_module_missing"}
+
+    def flow_disabled(self, mint, include=None):
+        """(v6) Why a catalogued library flow cannot run with the project's settings (catalog
+        `library_flow_conditions`), or None.  A row disables the flow only if every one of its enabling conditions is
+        statically false in every settings module / branch; an unknown value, a partially unknown INSTALLED_APPS or a
+        settings module MintMap could not fully evaluate keep the flow."""
+        rows = self.catalog.flow_conditions.get(mint.ref or "")
+        if not rows:
+            return None
+        for row in rows:
+            if row.get("include") and row["include"] != include:
+                continue
+            states = [self._condition_state(c) for c in row["enabled_if_any"]]
+            if states and all(st is not None and st[0] is False for st in states):
+                return "; ".join(st[1] for st in states) + f" ({row['source_location'].split(';')[0]})"
+        return None
+
+    def _condition_state(self, c):
+        """(enabled: bool, text) or None when unknown."""
+        if "installed_app" in c:
+            apps = self.settings.values.get("INSTALLED_APPS", _ABSENT)
+            if apps is _ABSENT or self.settings.partially_unknown("INSTALLED_APPS") or \
+                    self.settings.dynamic_items("INSTALLED_APPS"):
+                return None
+            for v in flat_values(apps):
+                if not isinstance(v, (list, tuple)):
+                    return None
+            name = c["installed_app"]
+            on = any(x == name or x.startswith(name + ".apps.") for x in self.settings.str_list("INSTALLED_APPS"))
+            return on, f"{name} {'in' if on else 'not in'} INSTALLED_APPS"
+        name = c["setting"]
+        v = self.settings.values.get(name, _ABSENT)
+        if v is _ABSENT:
+            if any(g.type in self.SETTINGS_MAY_ASSIGN_ANY for g in self.settings.gaps):
+                return None
+            opts, shown = [c["default"]], f"{name} unset (library default {c['default']!r})"
+        else:
+            opts = flat_values(v)
+            if any(isinstance(x, Dynamic) or type(x).__name__ in ("PartialUnknown", "_Unset") for x in opts):
+                return None
+            if any(not isinstance(x, (bool, int, float, str, list, tuple, dict, type(None))) for x in opts):
+                return None
+            shown = f"{name} = " + " | ".join(repr(x) for x in opts)
+        want = c["when"] == "truthy"
+        on = any(bool(x) == want for x in opts)
+        return on, shown
 
     @staticmethod
     def _variant_key(r: Route) -> tuple:
@@ -3028,6 +3101,9 @@ class Analysis:
             limits=dict(chain_limit=self.chain_limit, fingerprint_depth=self.fp_depth),
             custom_credentials=self.custom_credential_summary(),
             candidates=self.candidate_summary(candidates),
+            # (v6) catalogued library flows the project's settings switch off (catalog `library_flow_conditions`)
+            library_flows_disabled_by_settings=[dict(entry=k[0], mint=k[1], why=w)
+                                                for k, w in sorted(self.disabled_flows.items())],
         )
         return dict(
             tool=dict(name="mintmap", version=TOOL_VERSION, catalog_path=os.path.basename(self.catalog.path),
@@ -3396,6 +3472,15 @@ class Analysis:
 
 
 # ---------------------------------------------------------------- helpers
+_RUNTIME_PREFIX_RE = re.compile(r"^\^?(?:<dynamic>|\{[^{}/]+\})/?")
+
+
+def _runtime_prefix_base(pattern: str):
+    """(v6) The pattern without a leading prefix chosen at run time (`<dynamic>`, `{settings.X}`), or None."""
+    m = _RUNTIME_PREFIX_RE.match(pattern or "")
+    return pattern[m.end():] if m else None
+
+
 DIST_TO_PACKAGE = {
     "django": "django", "djangorestframework": "rest_framework",
     "djangorestframework-simplejwt": "rest_framework_simplejwt", "django-allauth": "allauth",

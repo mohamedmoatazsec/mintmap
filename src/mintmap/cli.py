@@ -91,6 +91,13 @@ def summarize(report: dict) -> str:
             lines.append(f"    [{c['id']}] {c['candidate']['rank']:<6} {where}  reached from {len(reached)} entry "
                          f"point(s): {', '.join(reached[:3])}{' ...' if len(reached) > 3 else ''}")
             lines.append(f"        {c['candidate']['reason']}")
+    off = cov.get("library_flows_disabled_by_settings") or []
+    if off:
+        lines.append(f"library flows switched off by settings (not paths; enabling one is a new path): {len(off)}")
+        for d in off[:20]:
+            lines.append(f"  {d['entry']} -> {d['mint']}: {d['why']}")
+        if len(off) > 20:
+            lines.append(f"  ... {len(off) - 20} more (see --json)")
     lines.append(f"gaps by type: {cov['gaps_by_type'] or '{}'}")
     for g in cov["gaps"][:40]:
         lines.append(f"  gap {g['type']}: {g['file']} {g['where']} :: {g['detail']}")

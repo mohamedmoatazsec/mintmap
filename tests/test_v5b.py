@@ -528,14 +528,16 @@ class SettingsGroupTests(unittest.TestCase):
         root = project(self, {"conf/urls.py": """\
             from django.urls import include, path
             urlpatterns = [path("accounts/", include("allauth.urls"))]
-        """}, settings_extra='ACCOUNT_LOGIN_ON_PASSWORD_RESET = False\nACCOUNT_EMAIL_REQUIRED = True\n')
+        """}, settings_extra='ACCOUNT_LOGIN_TIMEOUT = 900\nACCOUNT_EMAIL_REQUIRED = True\n')
         rep = scan(root)
-        reset = [p for p in rep["paths"] if "perform_password_reset_login" in p["mint"]["api"]]
+        # (v6) the flow setting used to be ACCOUNT_LOGIN_ON_PASSWORD_RESET; since v6 a False value switches that flow
+        # off (catalog `library_flow_conditions`), so the test uses the stashed-login timeout of the login stages
+        reset = [p for p in rep["paths"] if "stash_login" in p["mint"]["api"]]
         self.assertEqual(len(reset), 1)
 
         def mutate():
             write(root, "conf/settings.py", read(root, "conf/settings.py").replace(
-                "ACCOUNT_LOGIN_ON_PASSWORD_RESET = False", "ACCOUNT_LOGIN_ON_PASSWORD_RESET = True"))
+                "ACCOUNT_LOGIN_TIMEOUT = 900", "ACCOUNT_LOGIN_TIMEOUT = 3600"))
         findings, code = run_diff(self, root, mutate)
         self.assertEqual(code, 4, findings)
         self.assertEqual(findings_by(findings), sorted([reset[0]["id"], "settings:package:allauth"]))

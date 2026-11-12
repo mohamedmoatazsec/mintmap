@@ -85,6 +85,8 @@ class Catalog:
     # (v6) library function -> row (`library_secret_generators`): its return value is a fresh secret (treated like
     # a randomness source by the custom-credential heuristic)
     secret_generators: dict = field(default_factory=dict)
+    # (v6) mint ref -> [row] (`library_flow_conditions`): the settings / installed apps that enable the flow
+    flow_conditions: dict = field(default_factory=dict)
     catalog_version: int = 1
 
     def view_no_mint(self, symbol: str) -> str | None:
@@ -327,6 +329,20 @@ def load_catalog(path: str = DEFAULT_CATALOG) -> Catalog:
                 raise CatalogError(f"library_secret_generators row without {k!r}: {r}")
         secret_generators[r["symbol"]] = dict(r)
 
+    flow_conditions: dict = {}
+    for r in data.get("library_flow_conditions", []):
+        for k in ("mint_refs", "enabled_if_any", "source_location"):
+            if k not in r:
+                raise CatalogError(f"library_flow_conditions row without {k!r}: {r}")
+        for c in r["enabled_if_any"]:
+            if not (("setting" in c and c.get("when") in ("truthy", "falsy") and "default" in c) or
+                    "installed_app" in c):
+                raise CatalogError(f"library_flow_conditions: bad condition {c}")
+        for ref in r["mint_refs"]:
+            if ref not in entries:
+                raise CatalogError(f"library_flow_conditions: {ref!r} is not a catalog entry")
+            flow_conditions.setdefault(ref, []).append(dict(r))
+
     unmapped = sorted(r for r in entries if r not in used_refs)
     return Catalog(
         path=path, sha256=hashlib.sha256(raw).hexdigest(), entries_by_ref=entries,
@@ -340,4 +356,4 @@ def load_catalog(path: str = DEFAULT_CATALOG) -> Catalog:
         middleware_no_mint=middleware_no_mint, drf_auth_no_mint=drf_auth_no_mint, library_drf_auth=library_drf_auth,
         admin_registrations=admin_registrations, mint_setting_deps=mint_setting_deps, hook_settings=hook_settings,
         verified_versions=verified_versions, credential_models=credential_models, url_builders=url_builders,
-        secret_generators=secret_generators, catalog_version=int(data.get("catalog_version", 1)))
+        secret_generators=secret_generators, flow_conditions=flow_conditions, catalog_version=int(data.get("catalog_version", 1)))
