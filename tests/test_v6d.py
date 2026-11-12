@@ -29,12 +29,17 @@ written for these tests; no development-project code is copied.
                               PIN / secret check is a login whatever the model is called; SESSION_KEY constants
     IntegrationTokenTests     an integration-named field that a project authenticator looks requests up by is a
                               credential
-    WeakWordReaderTests       a weak word (`code`) on a user-linked model is a credential only when code that reads it
-                              back issues a session or credential (an e-mailed code, not a booking reference)
+    WeakWordReaderTests       a weak word (`code`) on a user-linked model is a credential only when project code reads
+                              it back by that field (an e-mailed code, a ping key; not a reference nobody checks)
     SessionVocabularyTests    principal nouns alone (`user_prefers_dark`) and UI words do not make a candidate;
                               a session write after a password re-check does, whatever the key is called
     CacheHandOffTests         a random nonce kept in a cache key that another view reads back to log the user in
+    WatchedTierTests          what a precision rule sets aside (random values without a credential word, signed values,
+                              session values that load a non-principal object, generators nothing references) is
+                              watched: one low-ranked lock entry per rule (`watched:<kind>`), fingerprinted by the
+                              site function and its entry points, diffed like candidates, accepted per group
 """
+import json
 import textwrap
 import unittest
 
@@ -1189,6 +1194,136 @@ class CacheHandOffTests(unittest.TestCase):
         ps = [p for p in scan(root)["paths"] if p["entry"]["id"].startswith("route:leave/")]
         self.assertEqual(len(ps), 1)
         self.assertIn("read back from the cache", ps[0]["mint"]["purpose_note"])
+
+
+# ============================================================================ watched tier
+W_MODELS = """\
+from django.db import models
+
+
+class Profile(models.Model):
+    user = models.OneToOneField("auth.User", on_delete=models.CASCADE)
+    grant = models.CharField(max_length=64, blank=True)
+
+
+class Event(models.Model):
+    name = models.CharField(max_length=40)
+    door_code = models.CharField(max_length=8)
+"""
+W_VIEWS = """\
+import secrets
+
+from django.core import signing
+from django.http import HttpResponse, HttpResponseForbidden, JsonResponse
+
+from shop.models import Event, Profile
+
+
+def issue_grant(request):
+    profile = Profile.objects.get(user=request.user)
+    profile.grant = secrets.token_urlsafe(32)
+    profile.save()
+    return JsonResponse({"grant": profile.grant})
+
+
+def preview(request):
+    return HttpResponse(signing.dumps({"layout": request.GET.get("l", "")}, salt="preview"))
+
+
+def enter_event(request):
+    ev = Event.objects.get(pk=request.POST["event"])
+    if ev.door_code != request.POST.get("door"):
+        return HttpResponseForbidden()
+    request.session["event_pk"] = ev.pk
+    return HttpResponse("ok")
+
+
+def event_page(request):
+    ev = Event.objects.get(pk=request.session["event_pk"])
+    return HttpResponse(ev.name)
+"""
+W_URLS = """\
+from django.urls import path
+from shop import views
+urlpatterns = [path("grant/", views.issue_grant), path("preview/", views.preview), path("event/in/", views.enter_event),
+               path("event/", views.event_page)]
+"""
+
+
+def watched(report, group=None):
+    return [w for w in report.get("watched", []) if group is None or w["watch"]["group"] == group]
+
+
+class WatchedTierTests(unittest.TestCase):
+    def w_project(self):
+        return project(self, {"conf/urls.py": W_URLS, "shop/models.py": W_MODELS, "shop/views.py": W_VIEWS})
+
+    def test_set_aside_sites_are_watched_not_reported(self):
+        rep = scan(self.w_project())
+        self.assertFalse([p for p in rep["paths"] if p["entry"]["id"].startswith(("route:grant/", "route:preview/"))])
+        self.assertEqual([w["entry"]["view"] for w in watched(rep, "random_value")], ["shop.views.issue_grant"])
+        self.assertEqual([w["entry"]["view"] for w in watched(rep, "signed_value")], ["shop.views.preview"])
+        # the door code is checked first: event_pk is a login now (session lookups after a secret check), so
+        # nothing is watched for it; the watched sites carry their entry points and a reason
+        w = watched(rep, "random_value")[0]
+        self.assertEqual(w["entry"]["reached_from"], ["route:grant/|shop.views.issue_grant"])
+        self.assertIn("no credential word", w["watch"]["reason"])
+        self.assertEqual(w["review"]["group"], "watched:random_value")
+
+    def test_session_lookup_writer_is_watched(self):
+        views = W_VIEWS.replace('    if ev.door_code != request.POST.get("door"):\n        return HttpResponseForbidden()\n', "")
+        rep = scan(project(self, {"conf/urls.py": W_URLS, "shop/models.py": W_MODELS, "shop/views.py": views}))
+        self.assertEqual([w["entry"]["view"] for w in watched(rep, "session_lookup")], ["shop.views.enter_event"])
+
+    def test_weakened_watched_generator_is_a_finding(self):
+        root = self.w_project()
+        findings, code = run_diff(self, root, lambda: replace_in(root, "shop/views.py", "secrets.token_urlsafe(32)",
+                                                                 "secrets.token_urlsafe(2)"))
+        self.assertEqual(code, 4, findings)
+        self.assertEqual([f["tier"] for f in findings if f["kind"] == "fingerprint_changed"], ["watched"])
+
+    def test_new_route_to_a_watched_site_is_a_finding(self):
+        root = self.w_project()
+        findings, code = run_diff(self, root, lambda: replace_in(
+            root, "conf/urls.py", 'path("event/", views.event_page)]',
+            'path("event/", views.event_page), path("v2/grant/", views.issue_grant)]'))
+        self.assertTrue(code & 4, findings)
+        self.assertIn("now also reached from route:v2/grant/", " ".join(f["message"] for f in findings))
+
+    def test_edits_elsewhere_on_the_path_are_not(self):
+        root = self.w_project()
+        findings, code = run_diff(self, root, lambda: replace_in(
+            root, "shop/views.py", "def event_page(request):", "def unrelated():\n    return 1\n\n\n"
+                                                               "def event_page(request):"))
+        self.assertEqual(code, 0, findings)
+
+    def test_unreferenced_generator_is_watched(self):
+        keys = "import secrets\n\n\ndef spare_api_token():\n    return secrets.token_urlsafe(40)\n"
+        rep = scan(project(self, {"conf/urls.py": "urlpatterns = []\n", "shop/keys.py": keys}))
+        self.assertEqual([w["entry"]["view"] for w in watched(rep, "unreferenced")], ["shop.keys.spare_api_token"])
+
+    def test_cli_report_and_accept_group(self):
+        import os
+        import subprocess
+        import sys
+        from mm_testutil import PROTO
+        root = self.w_project()
+
+        def cli(*args):
+            return subprocess.run([sys.executable, "-I", os.path.join(PROTO, "tests", "_cli.py"), *args],
+                                  capture_output=True, text=True, timeout=120)
+        out = cli("scan", root).stdout
+        self.assertIn("watched:random_value", out)
+        self.assertIn("set aside: ", out)
+        self.assertEqual(cli("init", root).returncode, 0)
+        r = cli("accept", root, "--all", "--reviewer", "alice")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(cli("diff", root).returncode, 0)
+        with open(os.path.join(root, "mintmap.lock")) as fh:
+            lock = json.load(fh)
+        self.assertEqual(sorted(g["id"] for g in lock["watched"]), ["watched:random_value", "watched:signed_value"])
+        r = cli("accept", root, "--group", "watched:signed_value", "--reviewer", "alice")
+        self.assertEqual(r.returncode, 0, r.stderr)
 
 
 if __name__ == "__main__":

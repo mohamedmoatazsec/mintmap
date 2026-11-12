@@ -63,10 +63,13 @@ def review_queue(report: dict) -> list:
     cgroups: dict = {}
     for c in cands:
         cgroups.setdefault(c["review"]["group"], []).append(c)
-    n_entries = len(paths) + len(cgroups) + len(settings)
+    watched = report.get("watched", [])
+    n_wgroups = len({w["watch"]["group"] for w in watched})
+    n_entries = len(paths) + len(cgroups) + len(settings) + n_wgroups
     lines = [f"REVIEW QUEUE: {n_entries} lock entr{'y' if n_entries == 1 else 'ies'}: {len(paths)} path(s) in "
              f"{len(groups)} credential kind(s), {len(cands)} candidate site(s) in {len(cgroups)} group entr"
-             f"{'y' if len(cgroups) == 1 else 'ies'}, {len(settings)} settings group(s). Highest risk first; "
+             f"{'y' if len(cgroups) == 1 else 'ies'}, {len(settings)} settings group(s), {len(watched)} watched "
+             f"site(s) in {n_wgroups} group entr{'y' if n_wgroups == 1 else 'ies'}. Highest risk first; "
              f"'why' says why each entry was reported."]
 
     def rkey(x):
@@ -100,10 +103,28 @@ def review_queue(report: dict) -> list:
     if settings:
         lines.append(f"  settings  authentication settings, one lock entry per group: "
                      f"{', '.join(g['id'] for g in settings)}")
+    wgroups: dict = {}
+    for w in report.get("watched", []):
+        wgroups.setdefault(f"watched:{w['watch']['group']}", []).append(w)
+    descs = (report["coverage"].get("watched") or {}).get("groups") or {}
+    for g in sorted(wgroups):
+        ws = wgroups[g]
+        lines.append(f"  {g}  (one lock entry; set aside as NOT credentials by a rule, watched so that a change is "
+                     f"a finding) {descs.get(g.split(':', 1)[1], {}).get('description', '')}: {len(ws)} site(s)")
+        for w in ws[:WATCHED_SHOWN]:
+            reached = w["entry"].get("reached_from") or []
+            lines.append(f"      [{w['id']}] {w['mint']['api']} at {_where(w['mint'], w['entry'])}  reached from "
+                         f"{len(reached)}: {', '.join(reached[:2])}{' ...' if len(reached) > 2 else ''}")
+            lines.append(f"          set aside: {w['watch']['reason'][:200]}")
+        if len(ws) > WATCHED_SHOWN:
+            lines.append(f"      ... {len(ws) - WATCHED_SHOWN} more (see --json `watched`)")
     lines.append("  after reviewing a group: mintmap accept <dir> --group <group> --reviewer NAME "
                  "(groups: " + ", ".join(sorted(groups, key=review.group_key) + sorted(cgroups) +
-                                         (["settings"] if settings else [])) + ")")
+                                         (["settings"] if settings else []) + sorted(wgroups)) + ")")
     return lines
+
+
+WATCHED_SHOWN = 15
 
 
 def summarize(report: dict) -> str:
@@ -151,7 +172,8 @@ def summarize(report: dict) -> str:
     aside = len(cc.get("set_aside") or []) + len(cc.get("session_lookups_set_aside") or [])
     if aside:
         lines.append(f"custom-credential heuristic: {aside} random value(s) / session lookup(s) set aside as not "
-                     f"credentials (see --json coverage.custom_credentials)")
+                     f"credentials; {len(report.get('watched', []))} watched site(s) are in the lock (the others "
+                     f"are named as identifiers, files, cache keys ...; see --json coverage.custom_credentials)")
     off = cov.get("library_flows_disabled_by_settings") or []
     if off:
         lines.append(f"library flows switched off by settings (not paths; enabling one is a new path): {len(off)}")
@@ -179,7 +201,7 @@ def _load_lock(lock_path: str):
     ok = isinstance(lock, dict) and all(
         isinstance(lock.get(k, []), list) and all(isinstance(e, dict) and isinstance(e.get("id"), str)
                                                   for e in lock.get(k, []))
-        for k in ("paths", "settings", "candidates"))
+        for k in ("paths", "settings", "candidates", "watched"))
     if not ok or "paths" not in lock:
         print(f"mintmap: {lock_path} is not a MintMap lock (expected a JSON object with a 'paths' list of entries)",
               file=sys.stderr)
@@ -195,7 +217,8 @@ def run_accept(args, lock_path: str) -> int:
     lock = _load_lock(lock_path)
     if lock is None:
         return EXIT_ERROR
-    entries = list(lock.get("settings", [])) + list(lock.get("candidates", [])) + list(lock.get("paths", []))
+    entries = list(lock.get("settings", [])) + list(lock.get("candidates", [])) + list(lock.get("watched", [])) + \
+        list(lock.get("paths", []))
     chosen = []
     if args.all:
         chosen = [e for e in entries if e.get("review_status") != "accepted"]
@@ -263,7 +286,8 @@ def main(argv=None) -> int:
     sp.add_argument("--all", action="store_true", help="accept every entry that is not accepted yet")
     sp.add_argument("--group", action="append",
                     help="(v6b) accept every entry of a review group shown by `scan`: kind:session, kind:token, "
-                         "kind:precursor, kind:custom, kind:other, candidates:<kind> or settings; repeatable")
+                         "kind:precursor, kind:custom, kind:other, candidates:<kind>, watched:<kind> or settings; "
+                         "repeatable")
     sp.add_argument("--reviewer", required=True, help="who reviewed the entries (stored in the lock)")
     sp.add_argument("--note", default="", help="policy note stored with each accepted entry")
     sp.add_argument("--lock", help="lock file (default: <project_dir>/mintmap.lock)")

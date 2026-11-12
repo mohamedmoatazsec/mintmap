@@ -112,6 +112,9 @@ def annotate(report: dict) -> dict:
         p["review"] = path_review(p)
     for c in report.get("candidates", []):
         c["review"] = candidate_review(c)
+    for w in report.get("watched", []):
+        # (v6c) set aside by a precision rule: one low-ranked group per rule, reviewed as "not a credential"
+        w["review"] = dict(group=f"watched:{w['watch']['group']}", risk="low", score=1, why=[w["watch"]["reason"]])
     report.setdefault("coverage", {})["review_summary"] = summary(report)
     return report
 
@@ -136,7 +139,8 @@ def group_key(group: str):
 
 def lock_entry_group(entry: dict) -> str:
     """The review group of a lock entry (also for locks written before v6b, which have no review block)."""
-    if entry.get("kind") == "candidate_group" or str(entry.get("id", "")).startswith("candidates:"):
+    if entry.get("kind") in ("candidate_group", "watched_group") or \
+            str(entry.get("id", "")).startswith(("candidates:", "watched:")):
         return entry["id"]
     if str(entry.get("id", "")).startswith("settings:"):
         return "settings"

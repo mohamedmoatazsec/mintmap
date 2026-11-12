@@ -65,7 +65,7 @@ def read(root, rel):
 
 
 def accept_all(lock):
-    for p in lock["paths"] + lock.get("settings", []) + lock.get("candidates", []):
+    for p in lock["paths"] + lock.get("settings", []) + lock.get("candidates", []) + lock.get("watched", []):
         p["review_status"] = "accepted"
         p["reviewer"] = "test-reviewer"
         p["policy_note"] = "fixture"

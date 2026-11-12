@@ -77,6 +77,9 @@ NOT_AUTH_STATE_WORDS = {
     # (v6c) UI preferences, hints and onboarding
     "prefers", "preference", "preferences", "tab", "tabs", "sidebar", "collapsed", "compact", "layout",
     "dismissed", "closed", "opened", "tip", "tips", "hint", "help", "onboarding"}
+# (v6c) words of a key that record a FAILED check (`bad_link`, `login_failed`): not a grant
+FAILURE_WORDS = {"bad", "fail", "failed", "failure", "failures", "error", "errors", "invalid", "wrong", "denied",
+                 "rejected", "expired", "blocked", "locked"}
 # words of a model name that mark a log / file / cache record rather than an elevation bound to the session
 NOT_BOUND_RECORD_WORDS = {"audit", "log", "logs", "history", "file", "files", "cached", "cache", "export", "download",
                           "upload", "report", "event", "events", "notification"}
@@ -356,7 +359,8 @@ class CandidateFinder:
                 rank = "medium"
             elif principal_key and not neg and vsig & {"principal", "auth_hash", "signed"}:
                 rank = "medium"
-            elif after_check and vsig & {"principal", "auth_hash", "timestamp", "flag", "signed"}:
+            elif after_check and not kws & FAILURE_WORDS and \
+                    vsig & {"principal", "auth_hash", "timestamp", "flag", "signed"}:
                 rank = "medium"
                 signals = sorted(set(signals) | {"after_secret_check"})
             else:

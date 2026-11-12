@@ -1385,23 +1385,14 @@ class CredentialHeuristics:
 
     def weak_value_readers(self, names, owner="") -> str:
         """(v6c) '' when a value kept under `names` (on model `owner`) may be a credential by how it is read back;
-        otherwise why not: nothing reads it back by that field (a lookup of that model, or of a model MintMap
-        cannot name, or a comparison with a request value), or every reader is analysed and none issues a
-        session or credential (see reader_issues)."""
+        otherwise why not: no project code looks it up by that field (a lookup of that model, or of a model
+        MintMap cannot name) or compares it with a request value.  Any reader keeps it: a key that authorises an
+        action (ping-by-key, an API capability) is consumed without a login."""
         readers = sorted({r for n in names for r, m in self.field_readers().get(n, []) if not m or not owner or
                           m == owner})
         if not readers:
             return "no project code looks it up or compares it by that field (it is not checked as a credential)"
-        undecided = False
-        for r in readers:
-            issues, complete, reaches = self.reader_issues(r)
-            if issues:
-                return ""
-            undecided |= reaches or not complete
-        if undecided:
-            return ""
-        return (f"the code that reads it back ({', '.join(readers[:3])}) neither logs anyone in nor issues a "
-                f"credential")
+        return ""
 
     CACHE_READ_LEAVES = ("get", "pop", "get_many", "aget", "hget", "hgetall", "getdel")
 
@@ -1628,8 +1619,7 @@ class CredentialHeuristics:
                              f"owner or a link to a user"
             if sink.kind in ("model_create", "attribute") and owner_head not in POSITIVE:
                 # (v6c) a weak word on a model linked to a user (a booking reference, a coupon code) is a credential
-                # only if the code that reads it back uses it as one: a lookup or comparison by that field whose
-                # closure logs someone in, authenticates a request or issues a credential (an e-mailed OTP)
+                # only if project code reads it back by that field (a lookup or a comparison with a request value)
                 why = self.weak_value_readers(sink.names, sink.owner)
                 if why:
                     return None, f"kept as {sink.names} on {sink.owner}: a weak credential word " \
@@ -1696,7 +1686,13 @@ class CredentialHeuristics:
                         s_.detail += f"; read back from the cache by {issuer}, which logs someone in"
                         break
             if not kept:
-                self.rejected.append(dict(function=fq, line=line, source=sym, reasons=sorted(set(why))[:3]))
+                row = dict(function=fq, line=line, source=sym, reasons=sorted(set(why))[:3])
+                named = {w for s_, _g in sinks for n in s_.names for w in words(n)}
+                if any(watchable_rejection(r) for r in why) or named & (STRONG | AUTH_NAME_WORDS):
+                    # (v6c) set aside by a judgement (no credential word, a weak word nobody checks, an
+                    # integration word ...), not by an identifier name: watched (fingerprinted and diffed)
+                    row["watch"] = "random_value"
+                self.rejected.append(row)
                 continue
             if any(c.func == fq and c.line == line for c in self.candidates.values()):
                 continue      # several sources in one statement (`uuid4().hex + uuid4().hex`): one mint site
@@ -1945,6 +1941,17 @@ TRANSFORM_LEAVES = {"hex", "lower", "upper", "decode", "encode", "strip", "repla
 
 
 RELATION_FIELDS = {"ForeignKey", "OneToOneField", "ManyToManyField", "ParentalKey"}
+
+
+# (v6c) words that make a name vetoed as an identifier / URL / nonce worth watching (`magic_url`, `signin_nonce`)
+AUTH_NAME_WORDS = {"signin", "login", "auth", "sso", "handoff", "session", "access"}
+
+
+def watchable_rejection(reason: str) -> bool:
+    """(v6c) A rejection of a random value that is a judgement MintMap may get wrong on unseen code (the value is
+    watched), as opposed to a name that says it is an identifier, a file, a cache key ... (`... not a credential
+    name`)."""
+    return "not a credential name" not in reason
 
 
 def _leaf(f) -> str:

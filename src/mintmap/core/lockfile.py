@@ -16,6 +16,9 @@ Exit-code bits returned by diff():
   bit 1, a member no longer found bit 2, a member whose fingerprint (code, checks, settings, entry points that reach
   it ...) changed bit 4; an unaccepted unchanged group sets bit 64.  Findings name the member and carry
   `tier: "candidate"`.
+  (v6c) watched groups (`watched:<kind>`): sites a precision rule set aside as not credentials (signed / random
+  values, session lookups of non-principal objects, generators nothing references), with the same bits per member
+  and `tier: "watched"`; their fingerprint is the site function's code, the symbol and the entry points.
 
 (v6b) Path entries carry an informational `review` block (credential-kind group such as `kind:session`, risk,
 why); diff never compares it, so a lock written before v6b (without it) stays valid, and `mintmap update` adds it.
@@ -123,6 +126,30 @@ def _lock_candidates(report: dict) -> list:
     return out
 
 
+def _watched_member(w: dict) -> dict:
+    site = w["mint"].get("site") or {}
+    return dict(site=site.get("function"), line=site.get("line"), file=site.get("file"), mint=w["mint"]["api"],
+                purpose=w["mint"]["purpose"], rank=w["watch"]["rank"], reason=w["watch"]["reason"],
+                reached_from=list(w["entry"].get("reached_from") or []), status=w["evidence"]["status"],
+                fingerprint=w["fingerprint"]["overall"], components=w["fingerprint"]["components"],
+                gaps=w.get("gaps", []), analysis_complete=w.get("analysis_complete", True))
+
+
+def _lock_watched(report: dict) -> list:
+    """(v6c) One lock entry per watched kind (`watched:<kind>`); each member is one site a precision rule set aside."""
+    from .fingerprint import digest
+    groups: dict = {}
+    for w in report.get("watched", []):
+        grp = w["watch"]["group"]
+        g = groups.setdefault(grp, dict(id=f"watched:{grp}", kind="watched_group", group=grp, members={}))
+        g["members"][w["id"]] = _watched_member(w)
+    out = []
+    for grp, g in sorted(groups.items()):
+        g["fingerprint"] = dict(overall=digest(sorted(f"{mid}={m['fingerprint']}" for mid, m in g["members"].items())))
+        out.append(dict(g, review_status="unreviewed", policy_note="", reviewer=""))
+    return out
+
+
 def build_lock(report: dict) -> dict:
     return dict(mintmap_lock_version=LOCK_VERSION, tool=_lock_tool(report["tool"]), project=report["project"],
                 coverage=_lock_coverage(report["coverage"]),
@@ -130,7 +157,9 @@ def build_lock(report: dict) -> dict:
                 settings=[_lock_settings(g) for g in report.get("settings_groups", [])],
                 paths=[_lock_path(p) for p in report["paths"]],
                 # (v6) candidate tier: one entry per kind, members = candidate sites
-                candidates=_lock_candidates(report))
+                candidates=_lock_candidates(report),
+                # (v6c) watched tier: sites set aside by a precision rule, one entry per kind
+                watched=_lock_watched(report))
 
 
 def _cut(v, n=160) -> str:
@@ -186,8 +215,8 @@ def merge_lock(old: dict, report: dict) -> tuple[dict, list]:
             notes.append(f"{g['id']} changed: review reset to unreviewed")
         else:
             notes.append(f"new {g['id']} (unreviewed)")
-    old_c = {g["id"]: g for g in old.get("candidates", [])}
-    for g in new["candidates"]:
+    old_c = {g["id"]: g for g in old.get("candidates", []) + old.get("watched", [])}
+    for g in new["candidates"] + new["watched"]:
         o = old_c.get(g["id"])
         if o and o["fingerprint"]["overall"] == g["fingerprint"]["overall"]:
             for f in REVIEW_FIELDS:
@@ -196,7 +225,7 @@ def merge_lock(old: dict, report: dict) -> tuple[dict, list]:
             g["previous_review"] = {f: o.get(f) for f in REVIEW_FIELDS}
             notes.append(f"{g['id']} changed: review reset to unreviewed")
         else:
-            notes.append(f"new {g['id']} with {len(g['members'])} candidate site(s) (unreviewed)")
+            notes.append(f"new {g['id']} with {len(g['members'])} site(s) (unreviewed)")
     for p in new["paths"]:
         o = old_by_id.get(p["id"])
         if not o:
@@ -294,22 +323,33 @@ def diff(lock: dict, report: dict) -> tuple[list, int]:
                 components=["settings"])
         elif o.get("review_status") != "accepted":
             add(UNREVIEWED, gid, f"settings group not accepted (review_status={o.get('review_status')!r})")
-    # (v6) candidate groups: findings per member site
-    old_c = {g["id"]: g for g in lock.get("candidates", [])}
-    cur_c = {g["id"]: g for g in build_lock(report)["candidates"]}
+    # (v6) candidate groups and (v6c) watched groups: findings per member site
+    built = build_lock(report)
+    for tier, key in (("candidate", "candidates"), ("watched", "watched")):
+        _diff_groups(lock.get(key, []), built[key], tier, add, findings)
+    # coverage
+    _diff_coverage(lock, report, add, findings)
+    return findings, code
+
+
+def _diff_groups(old_groups, cur_groups, tier, add, findings):
+    old_c = {g["id"]: g for g in old_groups}
+    cur_c = {g["id"]: g for g in cur_groups}
+    what = "candidate" if tier == "candidate" else "watched site (set aside by a rule as not a credential)"
     for gid in sorted(set(cur_c) | set(old_c)):
         o, n = old_c.get(gid), cur_c.get(gid)
         om, nm = (o or {}).get("members", {}), (n or {}).get("members", {})
         before = len(findings)
         for mid in sorted(set(nm) - set(om)):
             m = nm[mid]
-            add(NEW_PATH, mid, f"new candidate ({gid}, {m['rank']}): {m['site']} -> {m['mint']}; reached from "
+            add(NEW_PATH, mid, f"new {what} ({gid}, {m['rank']}): {m['site']} -> {m['mint']}; reached from "
                                f"{len(m['reached_from'])} entry point(s) {_cut(', '.join(m['reached_from']), 200)}; "
-                               f"{_cut(m['reason'], 300)}", tier="candidate", group=gid)
+                               f"{_cut(m['reason'], 300)}", tier=tier, group=gid)
         for mid in sorted(set(om) - set(nm)):
             m = om[mid]
-            add(REMOVED_PATH, mid, f"candidate no longer found ({gid}): {m['site']} -> {m['mint']} (code removed, "
-                                   f"or the analysis can no longer see it)", tier="candidate", group=gid)
+            add(REMOVED_PATH, mid, f"{what} no longer found ({gid}): {m['site']} -> {m['mint']} (code removed, "
+                                   f"or the analysis can no longer see it, or it is now reported elsewhere)",
+                tier=tier, group=gid)
         for mid in sorted(set(om) & set(nm)):
             a, b = om[mid], nm[mid]
             if a["fingerprint"] == b["fingerprint"]:
@@ -319,13 +359,15 @@ def diff(lock: dict, report: dict) -> tuple[list, int]:
             lost = sorted(set(a["reached_from"]) - set(b["reached_from"]))
             extra = "".join([f"; now also reached from {_cut(', '.join(gained), 300)}" if gained else "",
                              f"; no longer reached from {_cut(', '.join(lost), 300)}" if lost else ""])
-            add(FINGERPRINT_CHANGED, mid, f"candidate {m_site(b)} ({gid}) changed ({', '.join(comps)}){extra}; "
+            add(FINGERPRINT_CHANGED, mid, f"{tier} {m_site(b)} ({gid}) changed ({', '.join(comps)}){extra}; "
                                           f"previous review of {gid} ({(o or {}).get('review_status')}) no longer "
-                                          f"applies", components=comps, tier="candidate", group=gid)
+                                          f"applies", components=comps, tier=tier, group=gid)
         if len(findings) == before and o is not None and nm and o.get("review_status") != "accepted":
-            add(UNREVIEWED, gid, f"candidate group not accepted (review_status={o.get('review_status')!r}, "
-                                 f"{len(nm)} site(s))", tier="candidate", group=gid)
-    # coverage
+            add(UNREVIEWED, gid, f"{tier} group not accepted (review_status={o.get('review_status')!r}, "
+                                 f"{len(nm)} site(s))", tier=tier, group=gid)
+
+
+def _diff_coverage(lock, report, add, findings):
     oc, nc = lock.get("coverage", {}), _lock_coverage(report["coverage"])
     if nc["files_parsed"] < oc.get("files_parsed", 0):
         add(COVERAGE_REGRESSION, None, f"parsed files decreased {oc.get('files_parsed')} -> {nc['files_parsed']}")
@@ -367,7 +409,6 @@ def diff(lock: dict, report: dict) -> tuple[list, int]:
             f"lock written with Python {lock_py}, running Python {running_python()}. Fingerprints are designed "
             f"to be the same on every supported version (tested on 3.11-3.13); if most paths report "
             f"fingerprint_changed without a code change, run MintMap with Python {lock_py}")))
-    return findings, code
 
 
 def m_site(m: dict) -> str:

@@ -210,6 +210,7 @@ class Analysis:
         self._hooks = None               # (v5, R5)
         self.disabled_flows: dict = {}   # (v6) (entry id, mint ref) -> why the settings switch the flow off
         self.unreferenced_set_aside: list = []   # (v6) heuristic sites in functions nothing calls or names
+        self.watch_hits: dict = {}               # (v6c) watched sites: key -> {site, func, kind, symbol, entries}
         self._name_refs = None
         self._settings_reads: dict = {}
         self.fp_depth = fp_depth
@@ -3178,6 +3179,9 @@ class Analysis:
                                           truncated=trunc, graph=graph)
                     paths.append(p)
                     all_path_gaps += g
+                # (v6c) watched tier: sites set aside by a precision rule, recorded with the entry reaching them
+                for w in self.watched_sites(fq):
+                    self._watch_hit(w)["entries"].add(e.id)
                 # (v6) candidate tier: statement sites of this function, and calls handing the request to an
                 # uncatalogued authentication-package function
                 for site, api, note, cinfo in self.candidate_sites(fq, ctx):
@@ -3187,6 +3191,8 @@ class Analysis:
                                            truncated=trunc, graph=graph, candidate=cinfo)
                     paths.append(p)     # (v6) a candidate's gaps stay on its own entry, not in the global list
         paths += self.unrouted_paths(reached_mints, all_path_gaps)
+        self.unrouted_watched()
+        watched = self.watched_entries()
         paths += self.minting_subclass_paths(entries, [])
         paths = self.group_shared_heuristic_sites(paths)
         cand_paths = [p for p in paths if p.get("tier") == "candidate"]
@@ -3232,6 +3238,7 @@ class Analysis:
             limits=dict(chain_limit=self.chain_limit, fingerprint_depth=self.fp_depth),
             custom_credentials=self.custom_credential_summary(),
             candidates=self.candidate_summary(candidates),
+            watched=self.watched_summary(watched),
             # (v6) catalogued library flows the project's settings switch off (catalog `library_flow_conditions`)
             library_flows_disabled_by_settings=[dict(entry=k[0], mint=k[1], why=w)
                                                 for k, w in sorted(self.disabled_flows.items())],
@@ -3246,7 +3253,7 @@ class Analysis:
             routes=[r.describe() for r in sorted(up.routes, key=lambda r: (r.pattern, r.target))],
             derived_mint_wrappers=self.derived_wrappers(),
             settings_groups=self.settings_groups(),
-            paths=paths, candidates=candidates, coverage=coverage))
+            paths=paths, candidates=candidates, watched=watched, coverage=coverage))
 
     # (v6) 3, was 6: with URL-prefix twins merged, shared heuristic sites reached from 3-5 routes were split into
     # one path per route again; a lower-confidence site shared by three entry points is reviewed once
@@ -3454,6 +3461,132 @@ class Analysis:
         out.sort(key=lambda c: (c["candidate"]["group"], RANK_ORDER.get(c["candidate"]["rank"], 9), c["entry"]["id"]))
         return out
 
+    # ------------------------------------------------------------------------------------ (v6c) watched tier
+    WATCH_GROUPS = {
+        "signed_value": "signed / JWT values judged not to be credentials (no credential name and no principal "
+                        "payload, or every reader is analysed and issues nothing)",
+        "random_value": "random values judged not to be credentials (no credential word where they are kept, a weak "
+                        "word nobody checks as a credential, an outbound integration secret)",
+        "session_lookup": "session values read back to look up an object that is not a principal (flow state): the "
+                          "functions that write them",
+        "unreferenced": "credential-like generators in functions no project code calls or names (dead code, or "
+                        "dispatch MintMap cannot see)",
+    }
+
+    def watched_sites(self, fq) -> list:
+        """(v6c) [(site, symbol, reason, kind)]: sites of `fq` that a precision rule set aside (a signed value, a
+        random value, a session write whose key loads a non-principal object).  They are not credentials by
+        MintMap's rules, but those rules are judgements: the sites are watched (fingerprinted, diffed) so that a
+        wrong judgement on unseen code is visible, at the cost of one low-ranked review group per kind."""
+        memo = self.__dict__.setdefault("_watched_memo", {})
+        if fq in memo:
+            return memo[fq]
+        out = []
+        info = self.p.functions.get(fq)
+        if info is not None:
+            sites = list(self.cg.sites(fq))
+            for site in sites:
+                self.mint_of(site, self.cg.resolve(site, info.cls))     # decides signed values (memoised)
+            self.cred.run()
+            rows = self._watch_rows().get(fq, [])
+            for row in rows:
+                leaf = str(row["source"]).rsplit(".", 1)[-1]
+                hit = next((x for x in sites if x.line == row["line"] and not x.is_property and
+                            (x.leaf == leaf or str(x.text).endswith(leaf))), None)
+                if hit is not None:
+                    out.append((hit, str(row["source"]), "; ".join(row["reasons"])[:300], row["watch"]))
+            keys = self._watched_session_keys()
+            if keys and self.cred.mentions(info) & {"session", "SessionStore"}:
+                for st, kexpr, _v in self.cred.session_writes(info):
+                    hit = sorted(k for k in self.cred.key_patterns(kexpr, info) if k in keys)
+                    if hit:
+                        site = CallSite(func=fq, node=st, line=st.lineno, text=f"session[{hit[0]!r}] = ...",
+                                        leaf="session_store")
+                        out.append((site, f"session[{hit[0]}]", keys[hit[0]], "session_lookup"))
+        memo[fq] = out
+        return out
+
+    def _watch_rows(self) -> dict:
+        hit = self.__dict__.get("_watch_rows_idx")
+        if hit is None or len(self.cred.rejected) != self.__dict__.get("_watch_rows_n"):
+            hit = {}
+            for r in self.cred.rejected:
+                if r.get("watch") and r["function"] in self.p.functions:
+                    hit.setdefault(r["function"], []).append(r)
+            self._watch_rows_idx, self._watch_rows_n = hit, len(self.cred.rejected)
+        return hit
+
+    def _watched_session_keys(self) -> dict:
+        self.cred.auth_session_keys()
+        out = {}
+        for r in self.cred.session_lookups_set_aside:
+            if r["key"] not in self.cred.auth_session_keys():
+                out.setdefault(r["key"], f"read back by {r['function']} to look up an object: {r['reason']}")
+        return out
+
+    def _watch_hit(self, w) -> dict:
+        site, symbol, reason, kind = w
+        key = (kind, symbol, site.func)
+        h = self.watch_hits.get(key)
+        if h is None:
+            h = self.watch_hits[key] = dict(site=site, func=site.func, kind=kind, symbol=symbol, reason=reason,
+                                            entries=set())
+        return h
+
+    def unrouted_watched(self):
+        """(v6c) Watched sites no entry point reached: their call-graph roots (like unrouted paths)."""
+        callers: dict = {}
+        for fq, info in self.p.functions.items():
+            for site in self.cg.sites(fq):
+                for t, _ in self.cg.resolve(site, info.cls).targets:
+                    callers.setdefault(t, set()).add(fq)
+        for fq in sorted(self.p.functions):
+            for w in self.watched_sites(fq):
+                h = self._watch_hit(w)
+                if h["entries"]:
+                    continue
+                roots, seen, stack = set(), {fq}, [fq]
+                while stack:
+                    n = stack.pop()
+                    ps = callers.get(n, set()) - {n}
+                    if not ps:
+                        roots.add(n)
+                    for c in ps:
+                        if c not in seen:
+                            seen.add(c)
+                            stack.append(c)
+                h["entries"] |= {f"unrouted:{r}" for r in sorted(roots or {fq})[:10]}
+
+    def watched_entries(self) -> list:
+        """(v6c) One report entry per watched site.  Its fingerprint is deliberately narrow (the site function's
+        normalised code, the symbol and the entry points reaching it): a change of how the value is made or kept,
+        or a new way to reach it, is a finding; edits elsewhere on the paths that reach it are not."""
+        out = []
+        for (kind, symbol, func), h in sorted(self.watch_hits.items(), key=lambda kv: (kv[0][0], kv[0][2], kv[0][1])):
+            ids = sorted(h["entries"])
+            code = digest(["fn:" + func + ":" + self.inliner.function_dump(func), "mint:" + symbol,
+                           "entries:" + ",".join(ids)])
+            site = h["site"]
+            out.append(dict(
+                id=hashlib.sha256(f"watched_site||{kind}|{symbol}|{func}".encode()).hexdigest()[:16],
+                entry=dict(kind="watched_site", id=f"watched_site:{func}", view=func, route=None, functions=[],
+                           gates=[], notes=[], reached_from=ids),
+                mint=dict(api=symbol, kind="watched", purpose=f"watched_{kind}", purpose_basis=h["reason"],
+                          site=dict(file=self.p.file_of(func), function=func, line=site.line, call=site.text)),
+                tier="watched",
+                watch=dict(group=kind, rank="low", reason=h["reason"]),
+                evidence=dict(status="set_aside_by_rule", checks=[], factors={}),
+                gaps=[], analysis_complete=True,
+                fingerprint=dict(overall=digest(["code=" + code]), components=dict(code=code))))
+        return out
+
+    def watched_summary(self, watched) -> dict:
+        by = {}
+        for w in watched:
+            by[w["watch"]["group"]] = by.get(w["watch"]["group"], 0) + 1
+        return dict(groups={g: dict(sites=by.get(g, 0), description=d) for g, d in self.WATCH_GROUPS.items()},
+                    sites=len(watched))
+
     def candidate_summary(self, candidates) -> dict:
         by = {}
         for c in candidates:
@@ -3640,8 +3773,12 @@ class Analysis:
             cinfo = node[5] if len(node) > 5 else None
             if api.kind == HEURISTIC_KIND and not callers.get(fq) and self._unreferenced_function(fq):
                 # (v6) a heuristic credential site in a module-level, undecorated function that no project code
-                # calls or names (not as a field default, a signal connection, a setting string): dead code
+                # calls or names (not as a field default, a signal connection, a setting string): dead code.
+                # (v6c) watched, not dropped: dispatch MintMap cannot see may still call it
                 self.unreferenced_set_aside.append(dict(function=fq, line=site.line, mint=api.symbol))
+                self._watch_hit((site, api.symbol, "no project code calls or names this function (dead code, or "
+                                                   "dispatch MintMap cannot see)", "unreferenced"))["entries"].add(
+                    f"unrouted:{fq}")
                 continue
             roots, seen, stack = set(), {fq}, [fq]
             while stack:
