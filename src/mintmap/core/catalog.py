@@ -79,6 +79,12 @@ class Catalog:
     verified_versions: dict = field(default_factory=dict)
     # (v5 review) library model qualname -> MintAPI: creating it creates a credential (library_credential_models)
     credential_models: dict = field(default_factory=dict)
+    # (v6) library URL-list builder function -> row (`library_url_builders`): include(builder(...)) exposes the
+    # flows catalogued for the module the row names
+    url_builders: dict = field(default_factory=dict)
+    # (v6) library function -> row (`library_secret_generators`): its return value is a fresh secret (treated like
+    # a randomness source by the custom-credential heuristic)
+    secret_generators: dict = field(default_factory=dict)
     catalog_version: int = 1
 
     def view_no_mint(self, symbol: str) -> str | None:
@@ -305,6 +311,22 @@ def load_catalog(path: str = DEFAULT_CATALOG) -> Catalog:
                 raise CatalogError(f"library_hook_settings row without {k!r}: {r}")
         hook_settings.append(dict(r))
 
+    url_builders = {}
+    for r in data.get("library_url_builders", []):
+        for k in ("symbol", "same_flows_as", "source_location"):
+            if k not in r:
+                raise CatalogError(f"library_url_builders row without {k!r}: {r}")
+        if r["same_flows_as"] not in library_includes:
+            raise CatalogError(f"library_url_builders: {r['same_flows_as']} is not a catalogued include")
+        url_builders[r["symbol"]] = dict(r)
+
+    secret_generators = {}
+    for r in data.get("library_secret_generators", []):
+        for k in ("symbol", "source_location"):
+            if k not in r:
+                raise CatalogError(f"library_secret_generators row without {k!r}: {r}")
+        secret_generators[r["symbol"]] = dict(r)
+
     unmapped = sorted(r for r in entries if r not in used_refs)
     return Catalog(
         path=path, sha256=hashlib.sha256(raw).hexdigest(), entries_by_ref=entries,
@@ -317,5 +339,5 @@ def load_catalog(path: str = DEFAULT_CATALOG) -> Catalog:
         views_no_mint_prefixes=views_no_mint_prefixes, view_aliases=view_aliases,
         middleware_no_mint=middleware_no_mint, drf_auth_no_mint=drf_auth_no_mint, library_drf_auth=library_drf_auth,
         admin_registrations=admin_registrations, mint_setting_deps=mint_setting_deps, hook_settings=hook_settings,
-        verified_versions=verified_versions, credential_models=credential_models,
-        catalog_version=int(data.get("catalog_version", 1)))
+        verified_versions=verified_versions, credential_models=credential_models, url_builders=url_builders,
+        secret_generators=secret_generators, catalog_version=int(data.get("catalog_version", 1)))

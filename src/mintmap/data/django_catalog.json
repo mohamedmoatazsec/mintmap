@@ -767,6 +767,15 @@
    "kind": "method",
    "purpose": "session_rotation_keep_auth",
    "semantics": "VERIFIED: update_session_auth_hash (232) when sessions are used and LOGOUT_ON_PASSWORD_CHANGE is off."
+  },
+  {
+   "qualname": "django.contrib.auth.admin.UserAdmin.add_view (password chosen by the administrator)",
+   "package": "Django",
+   "source_location": "django/django/contrib/auth/admin.py:71,87-93,114-119",
+   "kind": "method",
+   "purpose": "admin_chosen_password",
+   "semantics": "VERIFIED: the add view uses add_form = AdminUserCreationForm (admin.py:71, get_form 87-93); BaseUserCreationForm.save calls set_password_and_save (django/contrib/auth/forms.py:246-248 -> SetPasswordMixin.set_password_and_save 131-132: user.set_password(cleaned_data['password1'])): an account is created with a password the administrator chose (AdminUserCreationForm can also leave it unusable, forms.py:592). Requires add and change permission on the user model (admin.py:121-135).",
+   "added_in": "v6"
   }
  ],
  "check_apis": [
@@ -1554,6 +1563,12 @@
    "source_location": "django_allauth/allauth/socialaccount/views.py:121",
    "evidence": "login_error = LoginErrorView.as_view()",
    "added_in": "v3"
+  },
+  {
+   "symbol": "social_django.views.disconnect",
+   "source_location": "social_auth_app_django/social_django/views.py:250-257",
+   "evidence": "@login_required view that returns do_disconnect(request.backend, request.user, association_id) (social_auth_core/social_core/actions.py:218-262: runs the disconnect pipeline / backend.disconnect and removes the social association); it never calls login()",
+   "added_in": "v6"
   }
  ],
  "library_classes_no_mint": [
@@ -1865,6 +1880,13 @@
    "source_location": "django/django/contrib/admin/sites.py:279-282,351-367",
    "evidence": "path('password_change/', wrap(self.password_change)) -> PasswordChangeView.as_view(**defaults)(request); form_valid calls update_session_auth_hash (django/contrib/auth/views.py:372)",
    "added_in": "v3"
+  },
+  {
+   "include": "django.contrib.admin.site.urls",
+   "mint_ref": "django.contrib.auth.admin.UserAdmin.add_view (password chosen by the administrator)",
+   "source_location": "django/django/contrib/auth/admin.py:40-41,114-119",
+   "evidence": "UserAdmin is registered for the default user model (@admin.register(User), admin.py:40); a project with a swapped user model registers its own admin, usually a UserAdmin subclass with the same add view (listed like UserAdmin.user_change_password)",
+   "added_in": "v6"
   }
  ],
  "library_view_flows": [
@@ -2694,5 +2716,37 @@
    "review_round": "v5-review"
   }
  ],
- "v3_note": "v3 sections are used by MintMap v5 to tell 'known not to mint' and 'mint list complete' apart from 'unknown'. Anything a catalogued package exposes that these sections do not declare is reported as a gap (no silent 'covered by the catalog' assumption)."
+ "v3_note": "v3 sections are used by MintMap v5 to tell 'known not to mint' and 'mint list complete' apart from 'unknown'. Anything a catalogued package exposes that these sections do not declare is reported as a gap (no silent 'covered by the catalog' assumption).",
+ "library_url_builders": [
+  {
+   "symbol": "allauth.headless.urls.build_urlpatterns",
+   "same_flows_as": "allauth.headless.urls",
+   "source_location": "django_allauth/allauth/headless/urls.py:13-75",
+   "evidence": "build_urlpatterns(client) returns the per-client headless URL patterns (account, socialaccount, mfa, usersessions and, for Client.APP only, tokens); the module's own urlpatterns mount exactly these lists under browser/ and app/ (urls.py:80-96), so a project include of build_urlpatterns(...) exposes the flows catalogued for include('allauth.headless.urls')",
+   "refs_only_for_client": {
+    "arg": 0,
+    "client_names": [
+     "APP"
+    ],
+    "refs": [
+     "allauth.headless.tokens.strategies.jwt.strategy.JWTTokenStrategy.create_access_token / create_access_token_payload",
+     "allauth.headless.tokens.strategies.jwt.strategy.JWTTokenStrategy.refresh_token",
+     "allauth.headless.internal.sessionkit.expose_session_token"
+    ],
+    "source_location": "django_allauth/allauth/headless/urls.py:64-73 (tokens/refresh routed only for Client.APP); django_allauth/allauth/headless/internal/authkit.py:87-88 (access tokens exposed only to Client.APP); django_allauth/allauth/headless/internal/sessionkit.py:25-26 (session tokens exposed only to Client.APP)"
+   },
+   "verified_version": "django-allauth 65.20.0",
+   "added_in": "v6"
+  }
+ ],
+ "library_url_builders_note": "(v6) Library functions that BUILD URL pattern lists (instead of a module-level urlpatterns): an include of their result exposes the flows catalogued for the module named in same_flows_as; flows that depend on the builder's argument are listed with the argument values that enable them.",
+ "library_secret_generators": [
+  {
+   "symbol": "oauth2_provider.generators.generate_client_secret",
+   "source_location": "django_oauth_toolkit/oauth2_provider/generators.py:40-45",
+   "evidence": "returns CLIENT_SECRET_GENERATOR_CLASS().hash(); the default ClientSecretGenerator.hash (generators.py:25-29) is oauthlib generate_client_id(length=CLIENT_SECRET_GENERATOR_LENGTH, chars=UNICODE_ASCII_CHARACTER_SET): a fresh OAuth client secret",
+   "added_in": "v6"
+  }
+ ],
+ "library_secret_generators_note": "(v6) Library functions whose return value is a freshly generated secret. The custom-credential heuristic treats a call to one like a randomness source: where its value is kept decides whether it is reported."
 }

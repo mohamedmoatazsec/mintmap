@@ -294,9 +294,11 @@ class _State:
 
 
 class UrlConfParser:
-    def __init__(self, project: Project, settings_values=None):
+    def __init__(self, project: Project, settings_values=None, url_builders=None):
         self.p = project
         self.settings = settings_values or {}
+        # (v6) catalogued library URL-list builders: {symbol: catalog row}
+        self.url_builders = url_builders or {}
         self.routes: list[Route] = []
         self.gaps: list[Gap] = []
         self.reached: set = set()
@@ -917,6 +919,10 @@ class UrlConfParser:
                 return []
             if fq in COPY_FUNCS:
                 return self.struct(expr.args[0], ctx, cond, prefix, _depth + 1) if expr.args else []
+            if fq in self.url_builders:
+                # (v6) a catalogued library function that builds a URL list: its flows are the catalogued
+                # include's (the route keeps the call, so the arguments can narrow them)
+                return [LibOp(self.url_builders[fq]["same_flows_as"], ctx, expr, cond, prefix)]
             if fq in IMPORT_STRING_FUNCS and expr.args:
                 s = self.str_value(expr.args[0], ctx)
                 if s is not None and s.literal:
@@ -1334,8 +1340,41 @@ class UrlConfParser:
                 for op in ops:
                     self.process_op(op, prefix, chain, site, helpers + (fq,), cond=cond)
                 return
+            pair = self._helper_route_args(expr, ctx) if fq not in (self.p.functions or {}) else None
+            if pair is not None:
+                # (v6) a library helper that wraps path() (feature-flag / conditional route helpers such as
+                # `flagged_path(FLAG, "x/", include(...))`): read as path(route, view) and kept CONDITIONAL; the
+                # assumption is a gap, so the routes behind it are visible instead of lost
+                route_expr, view_expr = pair
+                fake = ast.Call(func=ast.Name(id="path", ctx=ast.Load()), args=[route_expr, view_expr], keywords=[])
+                ast.copy_location(fake, expr)
+                self._gap("url_helper_read_as_path", site[0], where,
+                          f"{_u(expr)}: library helper {fq or leaf} read as path({_u(route_expr)}, ...), conditional",
+                          getattr(site[1], "lineno", 0))
+                self.handle_path(fake, ctx, True, prefix, chain, site, helpers + (fq or leaf,),
+                                 regex="re_path" in leaf or leaf in ("url",))
+                return
         self._gap("unsupported_url_construct", site[0], where, _u(expr) if expr is site[1] else
                   f"{_u(site[1])} -> {_u(expr)}", getattr(site[1], "lineno", 0))
+
+    def _helper_route_args(self, call, ctx):
+        """(route expression, view expression) when an unknown call takes a string route followed by an include()
+        or a view (`helper(..., "prefix/", include(...))`, `helper("x/", View.as_view())`), else None."""
+        args = list(call.args)
+        for i in range(len(args) - 1):
+            r, v = args[i], args[i + 1]
+            if not (isinstance(r, ast.Constant) and isinstance(r.value, str)):
+                continue
+            if isinstance(v, ast.Call):
+                fq = self.qname(ctx, v.func) or ""
+                leaf = v.func.attr if isinstance(v.func, ast.Attribute) else getattr(v.func, "id", "")
+                if fq in INCLUDE_FUNCS or leaf in ("include", "as_view"):
+                    return r, v
+            elif isinstance(v, (ast.Name, ast.Attribute)) and not (isinstance(v, ast.Attribute) and
+                                                                    v.attr in ("urls",)) and \
+                    (self.qname(ctx, v) or "") in self.p.functions:
+                return r, v
+        return None
 
     def handle_path(self, call, ctx, cond, prefix: RT, chain, site, helpers, regex=False):
         smod, snode = site
