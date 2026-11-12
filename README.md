@@ -2,9 +2,9 @@
 
 **A reviewed map of every code path that creates a login session or credential in a Django app, enforced in CI.**
 
-> **Status: experimental (0.5.0a1).** MintMap has been evaluated on eight open-source Django projects. On projects
-> it was not developed against, it missed about 30% of credential paths without warning, and about half of what it
-> reported were false alarms. It is a review aid, not a guarantee. Read [Accuracy](#accuracy) first.
+> **Status: experimental (0.5.0a1 was evaluated; this tree is 0.6.0.dev0, not yet evaluated).** MintMap has been
+> evaluated on eight open-source Django projects. On projects it was not developed against, it missed about 30% of
+> credential paths without warning, and about half of what it reported were false alarms. It is a review aid, not a guarantee. Read [Accuracy](#accuracy) first.
 
 ## The problem
 
@@ -22,6 +22,12 @@ than telling you *that the set of ways in has changed*.
    tokens, django-allauth flows, OAuth2 provider tokens, project-made tokens built from `secrets`/`uuid4`, ...).
 2. **Traces them to entry points**: URL routes (including `include()`, routers, helper functions, i18n
    patterns), middleware, admin registrations and library views.
+   *Since 0.6.0.dev0 (not yet evaluated on fresh projects):* it also lists lower-confidence **candidates**:
+   hand-written session state (logins, MFA / step-up / impersonation state, session hand-offs), passwords set
+   from a value the code does not generate, the request handed to an authentication-library function the catalog
+   does not describe, and unregistered subclasses of minting middleware or views. Candidates are traced,
+   fingerprinted and diffed like paths, but reviewed as one lock entry per kind (`candidates:<kind>`) whose
+   sites are ranked and carry the reason they were reported.
 3. **Records the checks it can see on the way**: password, TOTP, WebAuthn, token signature, permission gates, and
    a best-effort judgement of whether each check's result decides the outcome. This evidence is often weaker than
    the truth and sometimes wrong (see [Accuracy](#accuracy)).
@@ -105,6 +111,9 @@ its tests) in the same job before MintMap: anything that runs in the job can rep
 | 16 | `purpose_changed` | the credential issued on a path changed kind |
 | 32 | `coverage_regression` | MintMap can analyse less than before (new gaps, parse failures, changed roots) |
 | 64 | `unreviewed` | lock entries not yet accepted |
+
+A candidate group (`candidates:<kind>`) uses the same bits for its sites (a new site sets 1, a vanished one 2, a
+changed one 4, naming new or lost entry points); its findings carry `"tier": "candidate"`.
 | 128 | `error` | MintMap could not run (bad arguments, missing or invalid lock, catalog error, or an internal error) |
 
 Formatting, comments, docstrings and renamed local variables are normalised and do not change fingerprints. Simple
@@ -145,6 +154,10 @@ token models) to be missing without a gap, and expect to dismiss many false alar
 Full methodology and per-project numbers: [docs/EVALUATION.md](docs/EVALUATION.md).
 
 ## Known blind spots
+
+These are the blind spots of the evaluated release (0.5.0a1). 0.6.0.dev0 adds general mechanisms for the first
+five and for admin-chosen passwords and step-up grants (as candidates or confirmed paths); they have not been
+measured on projects the tool was not developed against yet.
 
 - Sessions written by hand with keys built at runtime (`request.session[f"..."]`).
 - Credentials created through related managers (`team.tokens.create(...)`) or Django `CreateView` saves.
