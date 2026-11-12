@@ -1056,10 +1056,22 @@ class Analysis:
         for row in rows:
             if row.get("include") and row["include"] != include:
                 continue
+            rt = (row.get("settings_read_through") or {}).get("setting")
+            if rt and any("setting" in c for c in row["enabled_if_any"]) and self.setting_may_be_set(rt):
+                continue        # (v6c) project code supplies every value of these settings at run time
             states = [self._condition_state(c) for c in row["enabled_if_any"]]
             if states and all(st is not None and st[0] is False for st in states):
                 return "; ".join(st[1] for st in states) + f" ({row['source_location'].split(';')[0]})"
         return None
+
+    def setting_may_be_set(self, name) -> bool:
+        """(v6c) The project assigns `name` (in a settings module, at run time, or possibly through a dynamic
+        assignment MintMap does not evaluate)."""
+        if name in self.settings.values or name in (self.settings.nodes or {}):
+            return True
+        if any(g.where == name for g in self.settings.gaps):
+            return True
+        return any(g.type in self.SETTINGS_MAY_ASSIGN_ANY for g in self.settings.gaps)
 
     def _condition_state(self, c):
         """(enabled: bool, text) or None when unknown."""
@@ -1072,7 +1084,13 @@ class Analysis:
                 if not isinstance(v, (list, tuple)):
                     return None
             name = c["installed_app"]
-            on = any(x == name or x.startswith(name + ".apps.") for x in self.settings.str_list("INSTALLED_APPS"))
+            on = False
+            for x in self.settings.str_list("INSTALLED_APPS"):
+                label = self.installed_app_name(x)
+                if label is None:
+                    return None        # (v6c) an AppConfig MintMap cannot read: it may install this app
+                if label == name:
+                    on = True
             return on, f"{name} {'in' if on else 'not in'} INSTALLED_APPS"
         name = c["setting"]
         v = self.settings.values.get(name, _ABSENT)
@@ -1090,6 +1108,40 @@ class Analysis:
         want = c["when"] == "truthy"
         on = any(bool(x) == want for x in opts)
         return on, shown
+
+    def installed_app_name(self, item):
+        """(v6c) The application an INSTALLED_APPS item installs, as django.apps.apps.is_installed() compares it
+        (AppConfig.name: django/apps/registry.py:242-249, Django 6.1.2): a module path is itself; a dotted path to an
+        AppConfig class is that class's `name` (set in the class or inherited).  A project AppConfig subclass of a
+        library config (`class Social(SocialAccountConfig)`) inherits the library's name; a library config
+        `<pkg>.apps.<Config>` is named `<pkg>` (Django's convention, and the form every catalogued app uses).  None
+        when MintMap cannot tell (a project class whose name is computed, an unresolved base, a library class
+        outside an `apps` module)."""
+        q = self.resolve_dotted(item)
+        if q in self.p.modules or (q not in self.p.classes and not item.rsplit(".", 1)[-1][:1].isupper()):
+            return item
+        if q in self.p.classes:
+            for c in self.p.mro(q):
+                ci = self.p.classes.get(c)
+                if ci is not None:
+                    if ci.unresolved_bases:
+                        return None
+                    v = ci.attrs.get("name")
+                    if v is not None:
+                        return v.value if isinstance(v, ast.Constant) and isinstance(v.value, str) else None
+                    continue
+                if c in self.APPCONFIG_BASES or c == "object":
+                    return None        # a project AppConfig without a name: Django refuses it
+                return self._library_config_name(c)
+            return None
+        return self._library_config_name(q or item)
+
+    @staticmethod
+    def _library_config_name(cls):
+        mod, _, _leaf = cls.rpartition(".")
+        if mod.endswith(".apps"):
+            return mod[:-len(".apps")]
+        return None
 
     @staticmethod
     def _variant_key(r: Route) -> tuple:
@@ -2490,11 +2542,46 @@ class Analysis:
         for pkg, prefixes in sorted(overlay.PACKAGE_SETTING_PREFIXES.items()):
             by_prefixes.setdefault(tuple(sorted(prefixes)), []).append(pkg)
         for prefixes, pkgs in sorted(by_prefixes.items(), key=lambda kv: kv[1]):
-            names = sorted(n for n in all_names if n not in taken and any(n.startswith(p) for p in prefixes))
+            # (v6c) a package's settings are a group only when the project uses the package (installed, imported
+            # or named in a setting): DEBUG alone is not an allauth setting group in a project without allauth
+            if not any(self.package_in_use(pkg) for pkg in pkgs):
+                continue
+            names = sorted(n for n in all_names if n not in taken and any(
+                n == p if p in overlay.PACKAGE_SETTING_EXACT else n.startswith(p) for p in prefixes))
             if names:
                 mk("package:" + "+".join(sorted(pkgs)), names)
         self._settings_groups = groups
         return groups
+
+    def package_in_use(self, pkg) -> bool:
+        """(v6c) The project installs (INSTALLED_APPS, also through an AppConfig path), imports, or names in a
+        setting string the top-level package `pkg`."""
+        memo = self.__dict__.setdefault("_pkg_in_use", {})
+        if pkg in memo:
+            return memo[pkg]
+        if pkg == "django":
+            memo[pkg] = True
+            return True
+        used = set()
+        for a in self.settings.str_list("INSTALLED_APPS"):
+            used.add(a.split(".")[0])
+        for mod in self.p.modules.values():
+            for q in mod.symbols.values():
+                if isinstance(q, str):
+                    used.add(q.split(".")[0])
+            for n in ast.walk(mod.tree):        # include("allauth.urls"), a dotted path loaded at run time
+                if isinstance(n, ast.Constant) and isinstance(n.value, str) and "." in n.value and \
+                        len(n.value) < 200 and " " not in n.value:
+                    used.add(n.value.split(".")[0])
+        for v in self.settings.values.values():
+            for x in flat_values(v):
+                for y in (x if isinstance(x, (list, tuple)) else [x]):
+                    if isinstance(y, str) and "." in y and " " not in y:
+                        used.add(y.split(".")[0])
+        hit = pkg in used or "INSTALLED_APPS" not in self.settings.values or \
+            bool(self.settings.dynamic_items("INSTALLED_APPS"))      # may be installed: keep the group
+        memo[pkg] = hit
+        return hit
 
     def settings_reads(self, fq: str) -> set:
         """(v5, R7) Settings a project function reads at run time: `settings.X`, `getattr(settings, "X"[, d])`
@@ -3401,6 +3488,8 @@ class Analysis:
         info = self.p.functions.get(fq)
         if info is None or info.cls or info.node.decorator_list or "." not in fq:
             return False
+        if info.module in self.dynamic_dispatch_modules():
+            return False      # (v6c) `getattr(keys, f"make_{kind}_token")()`: any function of it may be called
         if self._name_refs is None:
             refs: dict = {}
             for mname, mod in self.p.modules.items():
@@ -3422,6 +3511,40 @@ class Analysis:
             self._name_refs = refs
         return not self._name_refs.get(fq.rsplit(".", 1)[-1])
 
+    def dynamic_dispatch_modules(self) -> set:
+        """(v6c) Project modules whose attributes project code looks up by a name computed at run time:
+        `getattr(<module>, <non-constant>)`, `vars(<module>)[k]`, `<module>.__dict__[k]`, `globals()[k]` (its own
+        module).  Dispatch MintMap cannot attribute to a module (a module loaded by a computed name) is not seen
+        here: functions set aside as unreferenced stay visible in the watched tier."""
+        hit = getattr(self, "_dyn_mods", None)
+        if hit is not None:
+            return hit
+        out = set()
+
+        def const(e):
+            return isinstance(e, ast.Constant) and isinstance(e.value, str)
+        for mname, mod in self.p.modules.items():
+            for n in ast.walk(mod.tree):
+                target = None
+                if isinstance(n, ast.Call) and isinstance(n.func, ast.Name) and len(n.args) >= 2 and \
+                        n.func.id == "getattr" and not const(n.args[1]):
+                    target = n.args[0]
+                elif isinstance(n, ast.Subscript) and not const(n.slice):
+                    v = n.value
+                    if isinstance(v, ast.Call) and isinstance(v.func, ast.Name) and v.func.id == "vars" and v.args:
+                        target = v.args[0]
+                    elif isinstance(v, ast.Attribute) and v.attr == "__dict__":
+                        target = v.value
+                    elif isinstance(v, ast.Call) and isinstance(v.func, ast.Name) and v.func.id == "globals":
+                        out.add(mname)
+                if isinstance(target, (ast.Name, ast.Attribute)):
+                    q = self.p.resolve_expr_static(mname, target)
+                    q = self.p.canonical(q) if q else None
+                    if q in self.p.modules:
+                        out.add(q)
+        self._dyn_mods = out
+        return out
+
     APPCONFIG_BASES = ("django.apps.AppConfig", "django.apps.config.AppConfig")
     COMMAND_BASES = ("django.core.management.BaseCommand", "django.core.management.base.BaseCommand")
 
@@ -3433,6 +3556,8 @@ class Analysis:
         info = self.p.functions.get(root)
         if info is None:
             return ""
+        if ".migrations." in f".{root}.":
+            return "a Django migration (runs under `manage.py migrate`, at deploy time)"
         if info.cls and not info.parent:
             mro = self.p.mro(info.cls)
             leaf = root.rsplit(".", 1)[-1]
@@ -3530,8 +3655,10 @@ class Analysis:
                         stack.append(c)
             if not roots:
                 roots = {fq}  # recursion-only cycle
-            # (v6) Django data migrations run under `manage.py migrate`, never in a request
-            roots = {r for r in roots if ".migrations." not in f".{r}."}
+            # (v6) Django data migrations run under `manage.py migrate`, never in a request; (v6c) a site that ONLY
+            # migrations reach (a deploy-time service account with a token) stays visible as `startup_only`
+            req_roots = {r for r in roots if ".migrations." not in f".{r}."}
+            roots = req_roots or roots
             if cinfo is None and roots:
                 # (v6b) code that only start-up / deploy / command-line code reaches is not a request path: it is
                 # kept visible (fingerprinted, diffed) as a low-ranked candidate instead of a confirmed path

@@ -145,6 +145,63 @@ class SettingsInfo:
         return False
 
 
+_NAMESPACE_CALLS = ("globals", "vars", "locals")
+_NAMESPACE_WRITERS = ("update", "setdefault", "__setitem__", "pop", "clear")
+
+
+def _namespace_writes(tree) -> list:
+    """(v6c) [(line, text)] for statements that write a module's namespace dynamically: `globals().update(...)`,
+    `globals()[k] = v` (anywhere in the module: globals() is the module namespace inside functions too),
+    `vars()` / `locals()` writes at module level, and setattr / item stores / `__dict__` updates on
+    `sys.modules[...]`."""
+    out = []
+    top = set()
+    stack = list(tree.body)
+    while stack:          # module-level statements (not inside a def or a class body)
+        n = stack.pop()
+        top.add(id(n))
+        if not isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            stack.extend(x for x in ast.iter_child_nodes(n) if isinstance(x, ast.stmt))
+
+    def namespace(e, at_top):
+        if isinstance(e, ast.Call) and isinstance(e.func, ast.Name) and not e.args and not e.keywords:
+            return e.func.id == "globals" or (at_top and e.func.id in ("vars", "locals"))
+        if isinstance(e, ast.Attribute) and e.attr == "__dict__":
+            return namespace(e.value, at_top) or _mentions_sys_modules(e.value)
+        return _mentions_sys_modules(e)
+
+    def visit(st, at_top):
+        for n in ast.walk(st):
+            if isinstance(n, (ast.Assign, ast.AugAssign, ast.AnnAssign)):
+                tgts = n.targets if isinstance(n, ast.Assign) else [n.target]
+                for t in tgts:
+                    if isinstance(t, ast.Subscript) and namespace(t.value, at_top):
+                        out.append((n.lineno, _unparse(n)[:120]))
+            elif isinstance(n, ast.Call):
+                f = n.func
+                if isinstance(f, ast.Attribute) and f.attr in _NAMESPACE_WRITERS and namespace(f.value, at_top):
+                    out.append((n.lineno, _unparse(n)[:120]))
+                elif isinstance(f, ast.Name) and f.id in ("setattr", "delattr") and n.args and \
+                        _mentions_sys_modules(n.args[0]):
+                    out.append((n.lineno, _unparse(n)[:120]))
+
+    for st in ast.walk(tree):
+        if isinstance(st, ast.stmt) and not isinstance(st, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef,
+                                                               ast.If, ast.For, ast.While, ast.With, ast.Try)):
+            visit(st, id(st) in top)
+    seen, uniq = set(), []
+    for x in out:
+        if x not in seen:
+            seen.add(x)
+            uniq.append(x)
+    return uniq
+
+
+def _mentions_sys_modules(e) -> bool:
+    return any(isinstance(x, ast.Attribute) and x.attr == "modules" and isinstance(x.value, ast.Name) and
+               x.value.id == "sys" for x in ast.walk(e))
+
+
 def _relevant(name: str, prefixes) -> bool:
     return name in KEY_SETTINGS or any(name.startswith(p) for p in prefixes)
 
@@ -410,6 +467,12 @@ class _Evaluator:
         mod = self.p.modules.get(modname)
         if mod is None or modname in _stack:
             return env
+        for line, text in _namespace_writes(mod.tree):
+            # (v6c) the module's namespace written through globals() / vars() / locals() / sys.modules: any setting
+            # may be assigned (`globals().update(load_env())`, `for k, v in ...: globals()[k] = v`)
+            self.gaps.append(Gap("dynamic_setting", mod.path, "<settings>",
+                                 f"{text}: writes the settings module's namespace at run time; it may assign any "
+                                 f"setting", line))
         self.run_block(mod, mod.tree.body, env, _stack + (modname,))
         # (v5, R4) a module-level function that changes auth settings but that MintMap did not see being called
         # at module level (called through a variable, from another module, from a loop over functions ...)
@@ -952,16 +1015,32 @@ def extract_settings(project: Project, prefixes) -> SettingsInfo:
     for mod, finfo, n in sites:
         if True:
             mname = mod.name
-            if not (isinstance(n, ast.Assign) and len(n.targets) == 1 and isinstance(n.targets[0], ast.Attribute)):
+            target, value = None, None
+            if isinstance(n, ast.Assign) and len(n.targets) == 1 and isinstance(n.targets[0], ast.Attribute):
+                target, name, value = n.targets[0].value, n.targets[0].attr, n.value
+            elif isinstance(n, ast.Expr) and isinstance(n.value, ast.Call) and isinstance(n.value.func, ast.Name) \
+                    and n.value.func.id == "setattr" and len(n.value.args) == 3:
+                # (v6c) setattr(settings, "NAME", value): the same as `settings.NAME = value`; a computed name
+                # may assign any setting
+                target, key, value = n.value.args
+                if not (isinstance(key, ast.Constant) and isinstance(key.value, str)):
+                    q = project.resolve_expr_static(mname, target, finfo)
+                    if q and project.canonical(q) == "django.conf.settings":
+                        info.gaps.append(Gap("dynamic_setting", mod.path, "<settings>",
+                                             f"line {n.lineno}: {_unparse(n)[:120]}: a setting chosen at run "
+                                             f"time may be assigned"))
+                    continue
+                name = key.value
+            if target is None:
                 continue
-            t = n.targets[0]
-            if not (t.attr.isupper() and _relevant(t.attr, prefixes)):
+            if not (name.isupper() and _relevant(name, prefixes)):
                 continue
-            q = project.resolve_expr_static(mname, t.value, finfo)
+            q = project.resolve_expr_static(mname, target, finfo)
             if not q or project.canonical(q) != "django.conf.settings":
                 continue
+            t = ast.Attribute(value=target, attr=name, ctx=ast.Store())
             ev._cur_mod, ev._cur_func = mod, finfo
-            v = ev.ev(n.value, dict(merged))
+            v = ev.ev(value, dict(merged))
             ev._cur_func = None
             merged[t.attr] = merge_alternative_values(merged[t.attr], v) if t.attr in merged else v
             ev.record(t.attr, n)

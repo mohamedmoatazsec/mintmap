@@ -577,7 +577,9 @@ PACKAGE_SETTING_PREFIXES = {
     "django": ["LOGIN_", "PASSWORD_RESET_TIMEOUT", "PASSWORD_HASHERS"],
     "rest_framework": ["REST_FRAMEWORK"],
     "rest_framework_simplejwt": ["SIMPLE_JWT"],
-    "allauth": ["ACCOUNT_", "MFA_", "SOCIALACCOUNT_", "HEADLESS_", "IDP_", "DEBUG"],
+    # DEBUG: allauth accepts MFA_TOTP_INSECURE_BYPASS_CODE only with DEBUG (allauth/mfa/app_settings.py:79-82,
+    # django-allauth 65.20.0); an exact name (PACKAGE_SETTING_EXACT), not a prefix of DEBUG_TOOLBAR_CONFIG
+    "allauth": ["ACCOUNT_", "MFA_", "SOCIALACCOUNT_", "HEADLESS_", "IDP_", "DEBUG", "ALLAUTH_"],
     "django_otp": ["OTP_"],
     "two_factor": ["TWO_FACTOR_"],
     "knox": ["REST_KNOX"],
@@ -590,6 +592,9 @@ PACKAGE_SETTING_PREFIXES = {
     "oauth2_provider": ["OAUTH2_PROVIDER"],
     "mozilla_django_oidc": ["OIDC_"],
 }
+
+# (v6c) entries of PACKAGE_SETTING_PREFIXES that name one setting, not a prefix
+PACKAGE_SETTING_EXACT = {"DEBUG"}
 
 # Library base classes that do NOT define these methods (so a project CBV that
 # derives only from them has no library `post` that would dispatch form hooks).
