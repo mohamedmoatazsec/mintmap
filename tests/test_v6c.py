@@ -17,6 +17,9 @@ written for these tests; no development-project code is copied.
                                object attached to the request still is
     StartupOnlyTests           mint sites that only AppConfig.ready(), import-time calls (settings), management
                                commands or migration defaults reach are `candidates:startup_only` (low), not paths
+    SignedReadBackTests        a signed value (signing.dumps with a salt) that only code issuing no session or
+                               credential reads back (same salt) is state, not a credential; a hand-off link whose
+                               reader logs the user in stays a mint
     ReviewQueueTests           every path / candidate site carries a review block (group = credential kind or
                                candidate kind, risk, why); the text report is a review queue grouped by kind and entry
                                point; `accept --group` accepts one group; a lock written before v6b (no review block)
@@ -566,6 +569,65 @@ class ReviewQueueTests(unittest.TestCase):
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertEqual(self.cli("accept", root, "--all", "--reviewer", "bob").returncode, 0)
         self.assertEqual(self.cli("diff", root).returncode, 0)
+
+
+
+# ============================================================================ signed values read back
+SG_VIEWS = """\
+from django.contrib.auth import get_user_model, login
+from django.core import signing
+from django.http import HttpResponse, HttpResponseRedirect
+
+STATE_SALT = "connect-state"
+
+
+def connect_start(request):
+    state = signing.dumps({"user": request.user.pk, "next": "/"}, salt=STATE_SALT)
+    return HttpResponseRedirect("https://provider.example/authorize?state=" + state)
+
+
+def connect_return(request):
+    data = signing.loads(request.GET["state"], salt=STATE_SALT, max_age=600)
+    return HttpResponseRedirect(data["next"])
+
+
+def handoff_start(request):
+    link = signing.dumps({"user": request.user.pk}, salt="handoff")
+    return HttpResponse(link)
+
+
+def handoff_finish(request):
+    data = signing.loads(request.GET["t"], salt="handoff", max_age=60)
+    login(request, get_user_model().objects.get(pk=data["user"]))
+    return HttpResponse("ok")
+"""
+SG_URLS = """\
+from django.urls import path
+from shop import views
+urlpatterns = [path("connect/", views.connect_start), path("connect/return/", views.connect_return),
+               path("handoff/", views.handoff_start), path("handoff/finish/", views.handoff_finish)]
+"""
+
+
+class SignedReadBackTests(unittest.TestCase):
+    def test_state_read_back_without_login_is_not_a_credential(self):
+        root = project(self, {"conf/urls.py": SG_URLS, "shop/views.py": SG_VIEWS})
+        rep = scan(root)
+        signed = sorted(p["entry"]["id"].split("|")[0] for p in rep["paths"]
+                        if p["mint"]["api"] == "django.core.signing.dumps")
+        self.assertEqual(signed, ["route:handoff/"], signed)
+        aside = " ".join(str(r) for r in rep["coverage"]["custom_credentials"]["set_aside"])
+        self.assertIn("read back (same salt) only by shop.views.connect_return", aside)
+
+    def test_a_reader_that_starts_logging_in_makes_it_a_mint(self):
+        root = project(self, {"conf/urls.py": SG_URLS, "shop/views.py": SG_VIEWS})
+
+        def mutate():
+            replace_in(root, "shop/views.py", '    return HttpResponseRedirect(data["next"])\n',
+                       '    login(request, get_user_model().objects.get(pk=data["user"]))\n'
+                       '    return HttpResponseRedirect(data["next"])\n')
+        findings, code = run_diff(self, root, mutate)
+        self.assertTrue(code & 1, findings)
 
 
 if __name__ == "__main__":

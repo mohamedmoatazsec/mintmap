@@ -1077,12 +1077,103 @@ class CredentialHeuristics:
             ident = self._principal_payload(call, info)
             if ident:
                 out = (GENERIC_PURPOSE, f"signs a principal identifier ({ident})")
+        if out is not None:
+            # (v6b) the code that reads the value back (same salt) decides what it is: a value whose every reader
+            # neither logs anyone in nor issues a credential (nor do their callers) is integrity-protected state
+            # (a confirmation payload, an OAuth-like state, a redirect proof), not a credential
+            readers = self.signed_readers(call, info)
+            if readers and not any(self._issues_credential(r) for r in readers):
+                out = None
+                reason = (f"read back (same salt) only by {', '.join(readers[:3])}, which neither log anyone in nor "
+                          f"issue a credential (nor do their callers)")
         if out is None:
-            out = (None, f"{reason}; the signed payload names no principal identifier")
+            out = (None, f"{reason}; the signed payload names no principal identifier" if "read back" not in reason
+                   else reason)
             self.rejected.append(dict(function=info.qualname, line=site.line, source=site.text,
                                       reasons=[f"generic signing primitive: {out[1]}"]))
         memo[key] = out
         return out
+
+    READ_BACK_LEAVES = {"loads", "unsign", "unsign_object", "aunsign"}
+    ISSUING_LEAVES = {"login", "alogin", "set_password", "aset_password", "update_session_auth_hash"}
+
+    def _salt_signature(self, e, info):
+        """(v6b) A comparable form of a `salt=` expression: a string constant (also a module constant), or the
+        constant parts of an f-string / concatenation; None when nothing constant is left."""
+        if isinstance(e, ast.Constant) and isinstance(e.value, str):
+            return "s:" + e.value
+        if isinstance(e, (ast.Name, ast.Attribute)):
+            v = self.module_str_constant(info.module, e, info)
+            if v is not None:
+                return "s:" + v
+            return "n:" + (e.id if isinstance(e, ast.Name) else e.attr)
+        if isinstance(e, (ast.JoinedStr, ast.BinOp)):
+            parts = [c.value for c in ast.walk(e) if isinstance(c, ast.Constant) and isinstance(c.value, str)]
+            if "".join(parts).strip(":-_/. "):
+                return "f:" + "|".join(parts)
+        return None
+
+    def signed_readers(self, call, info) -> list:
+        """(v6b) Project functions that read a signed value back with the same salt (`signing.loads(v, salt=S)`,
+        `Signer(salt=S).unsign(v)`); [] when the salt is not comparable or nothing reads it back."""
+        salt = next((k.value for k in call.keywords if k.arg == "salt"), None)
+        if salt is None and isinstance(call.func, ast.Attribute) and isinstance(call.func.value, ast.Call):
+            salt = next((k.value for k in call.func.value.keywords if k.arg == "salt"), None)
+        sig = self._salt_signature(salt, info) if salt is not None else None
+        if sig is None:
+            return []
+        index = self.__dict__.get("_reader_index")
+        if index is None:
+            index = {}
+            for fq, finfo in self.p.functions.items():
+                for n in self.p.walk_function_body(finfo.node):
+                    if not (isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute)
+                            and n.func.attr in self.READ_BACK_LEAVES):
+                        continue
+                    k = next((x.value for x in n.keywords if x.arg == "salt"), None)
+                    if k is None and isinstance(n.func.value, ast.Call):
+                        k = next((x.value for x in n.func.value.keywords if x.arg == "salt"), None)
+                    ks = self._salt_signature(k, finfo) if k is not None else None
+                    if ks and fq not in index.setdefault(ks, []):
+                        index[ks].append(fq)
+            self._reader_index = index
+        return sorted(index.get(sig, []))
+
+    def _callers(self) -> dict:
+        hit = self.__dict__.get("_callers_map")
+        if hit is None:
+            hit = {}
+            for fq, finfo in self.p.functions.items():
+                for site in self.a.cg.sites(fq):
+                    for t, _ in self.a.cg.resolve(site, finfo.cls).targets:
+                        hit.setdefault(t, set()).add(fq)
+            self._callers_map = hit
+        return hit
+
+    def _issues_credential(self, fq) -> bool:
+        """(v6b) `fq`, a function that calls it, or what either calls (two levels down) logs someone in, sets a
+        password or calls a catalogued (non-generic) mint API."""
+        funcs = {fq} | self._callers().get(fq, set())
+        return any(self._issues_below(f, 2, set()) for f in funcs)
+
+    def _issues_below(self, fq, depth, seen) -> bool:
+        if fq in seen or fq not in self.p.functions:
+            return False
+        seen.add(fq)
+        finfo = self.p.functions[fq]
+        for site in self.a.cg.sites(fq):
+            if site.leaf in self.ISSUING_LEAVES:
+                return True
+            res = self.a.cg.resolve(site, finfo.cls)
+            for c in (res.library_candidates or ([res.library] if res.library else [])):
+                api = self.a.catalog.mint_calls.get(c)
+                if api is not None and not (api.heuristic and api.ref is None):
+                    return True
+            if depth > 0:
+                for t, _ in res.targets:
+                    if self._issues_below(t, depth - 1, seen):
+                        return True
+        return False
 
     def _parents(self, info) -> dict:
         memo = self.__dict__.setdefault("_parent_maps", {})
