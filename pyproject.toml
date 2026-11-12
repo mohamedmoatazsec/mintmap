@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "mintmap"
-version = "0.6.0.dev0"
+version = "0.6.0a1"
 description = "A reviewed map of every code path that creates a login session or credential in a Django app, enforced in CI."
 readme = "README.md"
 license = "Apache-2.0"

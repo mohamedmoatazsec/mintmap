@@ -2,9 +2,10 @@
 
 **A reviewed map of every code path that creates a login session or credential in a Django app, enforced in CI.**
 
-> **Status: experimental (0.5.0a1 was evaluated; this tree is 0.6.0.dev0, not yet evaluated).** MintMap has been
-> evaluated on eight open-source Django projects. On projects it was not developed against, it missed about 30% of
-> credential paths without warning, and about half of what it reported were false alarms. It is a review aid, not a guarantee. Read [Accuracy](#accuracy) first.
+> **Status: experimental (0.6.0a1).** MintMap was built on eight open-source Django projects and then frozen and
+> tested on three it had never seen (CVAT, Label Studio, Tandoor). There it missed 12% of credential paths with no
+> warning (an earlier set of unseen projects: 30%). 43% of the paths it reported were false alarms, and `diff` let
+> 23 of 65 harmful test changes through. It is a review aid, not a guarantee. Read [Accuracy](#accuracy) first.
 
 ## The problem
 
@@ -22,7 +23,7 @@ than telling you *that the set of ways in has changed*.
    tokens, django-allauth flows, OAuth2 provider tokens, project-made tokens built from `secrets`/`uuid4`, ...).
 2. **Traces them to entry points**: URL routes (including `include()`, routers, helper functions, i18n
    patterns), middleware, admin registrations and library views.
-   *Since 0.6.0.dev0 (not yet evaluated on fresh projects):* it also lists lower-confidence **candidates**:
+   *Since 0.6.0a1* it also lists lower-confidence **candidates**:
    hand-written session state (logins, MFA / step-up / impersonation state, session hand-offs, any session write
    right after a password or PIN re-check), passwords set from a value the code does not generate, calls into an
    authentication library the catalog does not describe (also packages the catalog does not cover at all, when the
@@ -45,8 +46,8 @@ than telling you *that the set of ways in has changed*.
 4. **Writes `mintmap.lock`**, which a security reviewer approves once.
 5. **Fails CI** when a pull request adds or removes a path, changes the code or checks on a reviewed path,
    weakens a check, or reduces what MintMap can analyse. Many constructs it cannot analyse are listed as
-   **gaps**, but not all: on projects it was not developed against, about 30% of credential paths were missed
-   with no gap at all (see [Accuracy](#accuracy)).
+   **gaps**, but not all: on projects it was not developed against, 12% to 30% of credential paths were missed
+   with no gap at all, depending on the project set (see [Accuracy](#accuracy)).
 
 Real output, after a one-line change that makes the Healthchecks TOTP form accept every code:
 
@@ -77,11 +78,13 @@ mintmap accept path/to/django/project --group kind:session --reviewer "alice" --
 git add path/to/django/project/mintmap.lock && git commit -m "Add reviewed MintMap lock"
 ```
 
-The text report of `scan` starts with a **review queue** (0.6.0.dev0): confirmed paths grouped by credential kind
+The text report of `scan` starts with a **review queue** (since 0.6.0a1): confirmed paths grouped by credential kind
 (`kind:session`, `kind:token`, `kind:precursor`, `kind:custom`, `kind:other`) and entry point, candidate sites by
 kind, the settings groups and the watched groups; inside a group the entries are ranked by a transparent risk
 score (credential kind, check evidence, reachability, confidence; an unrouted path is scored like a reachable one,
-because on unfamiliar code a route MintMap did not see is the common case), each with a `why` line.
+because on unfamiliar code a route MintMap did not see is the common case), each with a `why` line. The ranking is
+a hint, not a verdict: in the evaluation, false alarms were sometimes ranked high and an administrator setting any
+user's password was ranked low.
 `mintmap accept --group <group>` accepts one such group. Lock entries carry the same information in an informational `review` block that `diff` ignores (locks
 written by 0.5.0a1 stay valid; `mintmap update` adds it).
 
@@ -140,75 +143,84 @@ listing them) sets bit 1 when a new entry point reaches it, and the finding name
 Formatting, comments, docstrings and renamed local variables are normalised and do not change fingerprints. Simple
 extractions of a helper function in the same module are normalised too, but extracting a method, extracting a
 helper that takes expressions as arguments, or moving code to another module still changes the fingerprint (a
-false alarm): in the evaluation, 3 of 8 extract-function refactors raised a finding. (0.6.0.dev0, not yet
-evaluated: extracting a method of the same class that no subclass overrides, and helpers called with attribute
-arguments such as `request.META`, are normalised as well, unless a call in the helper could rebind the attribute
-(for example the helper calls `load_account(self, ...)` and the argument is `self.account`); so are moving the
-mint call itself into such a helper, and extracting a method in a class that a hook setting names; moving code to
-another module or class still is not.)
+false alarm). Since 0.6.0a1, extracting a method of the same class that no subclass overrides, and helpers called
+with attribute arguments such as `request.META`, are normalised as well, unless a call in the helper could rebind
+the attribute (for example the helper calls `load_account(self, ...)` and the argument is `self.account`); so are
+moving the mint call itself into such a helper, and extracting a method in a class that a hook setting names.
+Moving code to another module or class still is not. Even so, 7 of 22 harmless changes raised a finding in the
+latest evaluation: four extracted helper functions or methods (one named `_check_*`, which reads as a new
+unrecognised check), a value first held in a new local variable, a hook's local import moved to module level, and a
+settings expression rewritten without changing its value.
 
 ## Accuracy
 
-Measured on three open-source Django projects (InvenTree, Weblate, pretix) that nobody looked at while the tool
-was built. The reference inventories were written by separate AI agents (not humans) that never saw the tool's
-output, and every result was re-checked by an adversarial AI verifier that re-ran the tool:
+MintMap 0.6.0a1 (frozen before the test) was measured on three open-source Django projects that nobody looked at
+while it was built: CVAT, Label Studio and Tandoor. The previous release, 0.5.0a1, was run on the same projects as a
+control. The reference inventories were written by separate AI agents (not humans) that never saw the tool's
+output, and every result was re-checked by an adversarial AI verifier that re-ran both versions:
 
-| | result |
-|---|---|
-| credential paths found and linked to the right route | 56 of 149 (38%) |
-| found, but only as an unlinked mint or a named gap (1) | 48 of 149 (32%) |
-| **missed with no warning** | **45 of 149 (30%)** |
-| reported paths that are not real credential paths | 127 of 230 (55%) |
-| check evidence on matched paths: agrees / weaker than the truth / wrong (2) | 5 / 43 / 12 of 60 |
-| harmful code changes caught by `diff` (required categories) | 14 of 18 |
-| harmful code changes caught (all mutations incl. project-specific and verifier probes) | 40 of 58 |
-| harmless changes that raised a finding | 4 of 20 (refactors only: 3 of 16) |
+| | 0.6.0a1 | 0.5.0a1 (control) |
+|---|---|---|
+| credential paths found and linked to the right route | 28 of 66 (42%) | 26 of 66 (39%) |
+| found, but only as an unlinked mint, a candidate or a named gap (1) | 30 of 66 (45%) | 29 of 66 (44%) |
+| **missed with no warning** (2) | **8 of 66 (12%)** | **11 of 66 (17%)** |
+| reported paths that are not real credential paths | 25 of 58 (43%) | 30 of 61 (49%) |
+| lock entries to review on day one / of which false alarms | 88 / 33 | 82 / 33 |
+| check evidence on matched paths: agrees / weaker than the truth / wrong (3) | 2 / 38 / 2 of 42 | – |
+| harmful code changes caught by `diff` (required categories) | 13 of 18 | 13 of 18 |
+| harmful code changes caught (all, incl. project-specific and verifier probes) | 42 of 65 (65%) | 36 of 65 (55%) |
+| harmless changes that raised a finding | 7 of 22 | 8 of 22 |
 
-(1) 24 of the 31 units counted as "named gap" (InvenTree's allauth headless API) are visible only through global
-`unsupported_url_construct` gaps that are not attached to any path and appear only in `--json` output (the text
-report lists the first 40 gaps). (2) "Weaker" means the tool claimed less than was true (for example
-"relationship unproven" or "library flow checks not analysed"); "wrong" means it claimed something false, for
-example that a check guards a mint when it does not.
+(1) 4 of the 11 "named gap" units are visible only in `--json` output (the text report lists the first 40 gaps).
+Label Studio's personal access tokens, its main API credential, are among them and do not appear in the review
+queue. (2) By class: full login sessions 0 of 28, tokens 4 of 26, precursors (reset, invitation, MFA state) 4 of
+12. Scoring judgement calls move the 0.6.0a1 count between 4 and 12. (3) "Weaker" means the tool claimed less than
+was true, typically "no check found" on a login whose password check runs in a serializer or form named by a
+library setting. "Wrong" means it claimed something false.
 
-**In short:** `diff` catches most changes to the code it fingerprints and ignores most harmless refactors. But
-checks reached through runtime-built backends, forms or settings helpers can sit outside every fingerprint: 18 of
-58 harmful changes passed with exit 0, 8 of them on paths MintMap had already reported (including disabling
-Weblate's main TOTP check and pretix's central password check). The inventory is not complete either: in an
-unfamiliar codebase, expect around a third of credential paths (especially custom session handling and custom
-token models) to be missing without a gap, and expect to dismiss many false alarms on day one.
+**In short:** 0.6.0a1 is somewhat better than 0.5.0a1 on code neither had seen: 3 fewer silent misses, 6 more
+harmful changes caught, fewer false-alarm paths. But most of the large gains it made on its development projects
+(silent misses 51 → 4 of 213, harmful changes caught 98 of 98) did not transfer. The project set matters too: on an
+earlier set of unseen projects (InvenTree, Weblate, pretix) 0.5.0a1 missed 30% silently, against 17% here. Expect
+to miss some tokens and precursors in an unfamiliar codebase, to dismiss many false alarms on day one, and to see
+about a third of harmful changes to auth code pass `diff`, mostly where the changed check is reached through
+settings-named serializers, library-called hooks or admin code.
 
-Full methodology and per-project numbers: [docs/EVALUATION.md](docs/EVALUATION.md).
+Full methodology, per-project numbers and the earlier rounds: [docs/EVALUATION.md](docs/EVALUATION.md).
 
 ## Known blind spots
 
-These are the blind spots of the evaluated release (0.5.0a1). 0.6.0.dev0 adds general mechanisms for the first
-five and for admin-chosen passwords and step-up grants (as candidates or confirmed paths); they have not been
-measured on projects the tool was not developed against yet.
+General causes of the misses found in the latest evaluation (0.6.0a1 on CVAT, Label Studio and Tandoor):
 
-- Sessions written by hand with keys built at runtime (`request.session[f"..."]`).
-- Credentials created through related managers (`team.tokens.create(...)`) or Django `CreateView` saves.
-- Project code that calls a library's login flow directly (for example `social_django.views.complete()`).
-- Settings computed by function calls (`MIDDLEWARE = CONFIG.get(...)`): middleware logins become invisible.
-- Library URL builder functions (allauth headless `build_urlpatterns()`): reported as gaps, not linked.
-- Checks reached through runtime-built backends, forms or settings helpers: they may sit outside every
-  fingerprint, so weakening them can pass `diff`.
-- Session step-up grants, admin-chosen passwords, multi-request flows, and token *consumers* are not modelled
-  (0.6.0.dev0: step-up state, admin-chosen passwords and project request authenticators are candidates).
+- A library's mint function called through the library's settings object (dj-rest-auth
+  `api_settings.TOKEN_CREATOR(...)`): neither a path nor a gap.
+- Credentials created or edited through the Django admin for project models (`ModelAdmin` saves, admin actions, a
+  token field in an admin form). Admin registrations are linked only when the model's `save()` is a known mint.
+- A settings module that star-imports its base module through a source-root alias: the base module's
+  `INSTALLED_APPS`, `MIDDLEWARE`, `AUTHENTICATION_BACKENDS` and `REST_FRAMEWORK` are not read (one generic gap).
+- Hooks named in settings and loaded by a project helper (`load_func(settings.X)`), and adapter classes re-exported
+  from a package `__init__`: such code is in no fingerprint, so weakening it can pass `diff`.
+- DRF routers extended at run time (one global gap), tokens created by `ModelSerializer.create()` through `super()`,
+  and credentials written from request data by an update serializer.
+- Values whose field name has no credential word (`InviteLink.uuid`) and session writes without a principal-like
+  signal are set aside in the JSON report only, not watched.
+- Libraries outside the catalog (for example django-auth-ldap) and project code that only such a library calls.
+- Not modelled: session lifetime and token revocation checks, project view decorators, admin actions as entry
+  points, signed cookies (`set_signed_cookie`) as credentials, multi-request flows. There is no option to choose the
+  settings module: MintMap follows `DJANGO_SETTINGS_MODULE` in `manage.py`.
 - Django only. Library knowledge covers Django auth, DRF, SimpleJWT, knox, djoser, dj-rest-auth, django-allauth,
-  social-auth, django-otp, two-factor-auth, sesame, oauth-toolkit and a few more (15 packages). Other libraries
-  usually show up as gaps, but not always (see [Accuracy](#accuracy)).
+  social-auth, django-otp, two-factor-auth, sesame, oauth-toolkit and a few more (about 15 packages). Other
+  libraries usually show up as gaps, but not always.
 
-Shapes found silent by a review of 0.6.0.dev0 on 31 synthetic projects, and how the current tree handles them
-(not yet measured on fresh projects): custom model managers and querysets (`objects = KeyManager()`,
-`QS.as_manager()`: now resolved), uncatalogued authentication libraries called directly (now candidates when the
-function name says it logs in or issues a token), non-DRF request authenticators (Channels `scope["user"]`,
-django-ninja `authenticate()`, `request.user = SimpleLazyObject(...)`: now candidates), class-based settings
-(django-configurations: now read), project code that libraries call through settings, signals or permission
-registries (`CAN_LOGIN_AS = "..."`, `@receiver(populate_user)`, `rules.add_perm(...)`: now hashed in a
-`settings:AUTH_HOOKS(project code)` entry), and URL lists filled at run time by a decorator (now a gap; the
-views stay unrouted).  Still not modelled: a signed cookie (`set_signed_cookie`) is not a credential of its own
-(its reader is a candidate when it sets `request.user`), and checks reached through code MintMap cannot resolve can
-still sit outside every fingerprint.
+0.6.0a1 added general mechanisms for the blind spots of 0.5.0a1:
+- hand-written sessions with run-time keys
+- credentials created through related managers and `CreateView`
+- library flows called directly
+- settings computed by function calls
+- library URL builders
+- admin-chosen passwords and step-up state (as candidates)
+
+The evaluation above is the measure of how far that went.
 
 ## How is this different from Semgrep or CodeQL?
 
@@ -226,7 +238,7 @@ library source file they were read from, with a line number where the fact is li
 misses silently are especially welcome. Tests: `python -I -m unittest discover -s tests -t tests`.
 
 The internal development log of the prototype (design notes, rounds 1 and 2 in detail including their failures;
-round 3 is summarised in [docs/EVALUATION.md](docs/EVALUATION.md)) is in
+rounds 3 and 4 are summarised in [docs/EVALUATION.md](docs/EVALUATION.md)) is in
 [docs/DEVELOPMENT_HISTORY.md](docs/DEVELOPMENT_HISTORY.md). Its commands and paths refer to the prototype, not to
 this package.
 

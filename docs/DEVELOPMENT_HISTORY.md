@@ -12,7 +12,7 @@
 > Current usage: [README.md](../README.md). Current results: [EVALUATION.md](EVALUATION.md). Review enforcement
 > and the GitHub Action: [ENFORCEMENT.md](ENFORCEMENT.md).
 >
-> v6 (0.6.0.dev0) was developed in the release package (`src/mintmap/`) and is summarised in the first section
+> v6 (developed as 0.6.0.dev0, released as 0.6.0a1) was developed in the release package (`src/mintmap/`) and is summarised in the first section
 > below, in three parts (v6a, v6b, v6c); it has not been evaluated on fresh projects.
 >
 > Changes in release 0.5.0a1 after this log: fingerprints, gap keys and settings values use a
@@ -45,7 +45,7 @@ paths, changed evidence, or reduced analysis coverage.
 This is a prototype for evaluating an idea. It is **not** a vulnerability scanner. Its
 labels describe *what the analysed code shows*. They are not security verdicts.
 
-## What changed in v6 (0.6.0.dev0; developed in the release package, not yet evaluated on fresh projects)
+## What changed in v6 (0.6.0.dev0, released as 0.6.0a1; held-out results in docs/EVALUATION.md, round 4)
 
 Round 3 (frozen v5 on InvenTree, Weblate, pretix; see [EVALUATION.md](EVALUATION.md)) missed 45 of 149 units with
 no visible gap and 18 of 58 harmful mutations passed `diff`; v4 had the same silent rate on its own held-out set, so
