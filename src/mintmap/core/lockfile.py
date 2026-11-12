@@ -16,6 +16,11 @@ Exit-code bits returned by diff():
   bit 1, a member no longer found bit 2, a member whose fingerprint (code, checks, settings, entry points that reach
   it ...) changed bit 4; an unaccepted unchanged group sets bit 64.  Findings name the member and carry
   `tier: "candidate"`.
+
+(v6b) Path entries carry an informational `review` block (credential-kind group such as `kind:session`, risk,
+why); diff never compares it, so a lock written before v6b (without it) stays valid, and `mintmap update` adds it.
+`mintmap accept --group <group>` accepts every entry of a review group (`kind:<k>`, `candidates:<kind>`,
+`settings`); for an older lock the group of a path is derived from its purpose.
 """
 from __future__ import annotations
 
@@ -66,6 +71,8 @@ def _lock_path(p: dict) -> dict:
         fingerprint_complete=p.get("fingerprint_complete", True),     # (v5 review)
         gaps=p["gaps"],
         fingerprint=p["fingerprint"],
+        # (v6b) informational: review group (credential kind), risk and why (not compared by diff)
+        **({"review": p["review"]} if "review" in p else {}),
         review_status="unreviewed",
         policy_note="",
         reviewer="",

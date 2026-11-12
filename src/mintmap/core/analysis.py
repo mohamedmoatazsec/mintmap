@@ -17,6 +17,7 @@ from .libsource import LibrarySource
 from .lockfile import SHADOWED_STATUS
 from .project import Project, Gap
 from .refactor import Inliner
+from . import review
 from .credentials import CredentialHeuristics, heuristic_api, HEURISTIC_KIND, MANAGER_ATTRS, CREATE_METHODS
 from .candidates import CandidateFinder, CANDIDATE_KIND, GROUPS as CANDIDATE_GROUPS, RANK_ORDER, candidate_api
 from .settings_extract import extract_settings, drf_auth_classes, canonical_value, Dynamic, flat_values, \
@@ -3148,7 +3149,7 @@ class Analysis:
             library_flows_disabled_by_settings=[dict(entry=k[0], mint=k[1], why=w)
                                                 for k, w in sorted(self.disabled_flows.items())],
         )
-        return dict(
+        return review.annotate(dict(
             tool=dict(name="mintmap", version=TOOL_VERSION, catalog_path=os.path.basename(self.catalog.path),
                       library_paths=self.lib.roots,
                       catalog_sha256=self.catalog.sha256, overlay_sha256=_file_sha(overlay.__file__),
@@ -3158,7 +3159,7 @@ class Analysis:
             routes=[r.describe() for r in sorted(up.routes, key=lambda r: (r.pattern, r.target))],
             derived_mint_wrappers=self.derived_wrappers(),
             settings_groups=self.settings_groups(),
-            paths=paths, candidates=candidates, coverage=coverage)
+            paths=paths, candidates=candidates, coverage=coverage))
 
     # (v6) 3, was 6: with URL-prefix twins merged, shared heuristic sites reached from 3-5 routes were split into
     # one path per route again; a lower-confidence site shared by three entry points is reviewed once

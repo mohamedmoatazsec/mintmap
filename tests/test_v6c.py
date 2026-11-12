@@ -17,7 +17,13 @@ written for these tests; no development-project code is copied.
                                object attached to the request still is
     StartupOnlyTests           mint sites that only AppConfig.ready(), import-time calls (settings), management
                                commands or migration defaults reach are `candidates:startup_only` (low), not paths
+    ReviewQueueTests           every path / candidate site carries a review block (group = credential kind or
+                               candidate kind, risk, why); the text report is a review queue grouped by kind and entry
+                               point; `accept --group` accepts one group; a lock written before v6b (no review block)
+                               still diffs clean
 """
+import json
+import os
 import textwrap
 import unittest
 
@@ -455,6 +461,111 @@ class StartupOnlyTests(unittest.TestCase):
             root, "shop/bootstrap.py", 'username="service"', 'username="admin"'))
         self.assertTrue(code & 4, findings)
         self.assertTrue([f for f in findings if f.get("group") == "candidates:startup_only"], findings)
+
+
+
+# ============================================================================ review queue
+RQ_VIEWS = """\
+from django.contrib.auth import authenticate, login
+from django.http import HttpResponse, HttpResponseForbidden
+from rest_framework.authtoken.models import Token
+
+
+def issue(request):
+    Token.objects.create(user=request.user)
+    return HttpResponse("ok")
+
+
+def sign_in(request):
+    user = authenticate(request, username=request.POST["u"], password=request.POST["p"])
+    if user is None:
+        return HttpResponseForbidden()
+    login(request, user)
+    return HttpResponse("ok")
+
+
+def quick(request):
+    login(request, request.user)
+    return HttpResponse("ok")
+"""
+RQ_URLS = """\
+from django.urls import path
+from shop import views
+urlpatterns = [path("token/", views.issue), path("in/", views.sign_in), path("quick/", views.quick)]
+"""
+
+
+class ReviewQueueTests(unittest.TestCase):
+    def project(self):
+        return project(self, {"conf/urls.py": RQ_URLS, "shop/views.py": RQ_VIEWS, "shop/apps.py": SU_APPS,
+                              "shop/bootstrap.py": SU_BOOT, "shop/keys.py": SU_KEYS}, settings=SU_SETTINGS)
+
+    def cli(self, *args):
+        import subprocess
+        import sys
+        from mm_testutil import PROTO
+        import os
+        return subprocess.run([sys.executable, "-I", os.path.join(PROTO, "tests", "_cli.py"), *args],
+                              capture_output=True, text=True, timeout=120)
+
+    def test_review_blocks_rank_by_kind_and_evidence(self):
+        rep = scan(self.project())
+        by_entry = {p["entry"]["id"].split("|")[0]: p["review"] for p in rep["paths"]}
+        self.assertEqual(by_entry["route:quick/"]["group"], "kind:session")
+        self.assertEqual(by_entry["route:quick/"]["risk"], "high")
+        self.assertIn("no check found on the path", by_entry["route:quick/"]["why"])
+        self.assertEqual(by_entry["route:in/"]["group"], "kind:session")
+        self.assertNotEqual(by_entry["route:in/"]["risk"], "high")
+        self.assertEqual(by_entry["route:token/"]["group"], "kind:token")
+        cands = {c["review"]["group"] for c in rep["candidates"]}
+        self.assertIn("candidates:startup_only", cands)
+        self.assertEqual(rep["coverage"]["review_summary"]["kind:session"]["entries"], 2)
+
+    def test_text_report_is_a_review_queue(self):
+        root = self.project()
+        r = self.cli("scan", root)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        out = r.stdout
+        self.assertIn("REVIEW QUEUE", out)
+        self.assertLess(out.index("kind:session"), out.index("kind:token"))
+        self.assertLess(out.index("kind:token"), out.index("candidates:startup_only"))
+        # highest risk first inside a kind
+        self.assertLess(out.index("route:quick/"), out.index("route:in/"))
+        self.assertIn("why: ", out)
+
+    def test_accept_group_then_diff(self):
+        root = self.project()
+        lock = os.path.join(root, "mintmap.lock")
+        self.assertEqual(self.cli("init", root).returncode, 0)
+        r = self.cli("accept", root, "--group", "kind:session", "--reviewer", "alice")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        with open(lock) as fh:
+            data = json.load(fh)
+        acc = {p["review"]["group"] for p in data["paths"] if p["review_status"] == "accepted"}
+        self.assertEqual(acc, {"kind:session"})
+        self.assertEqual(self.cli("diff", root).returncode, 64)
+        r = self.cli("accept", root, "--group", "kind:token", "--group", "candidates:startup_only", "--group",
+                     "settings", "--reviewer", "alice")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(self.cli("diff", root).returncode, 0, self.cli("diff", root).stdout)
+        bad = self.cli("accept", root, "--group", "kind:nonsense", "--reviewer", "alice")
+        self.assertEqual(bad.returncode, 128)
+        self.assertIn("groups in this lock", bad.stderr)
+
+    def test_lock_without_review_blocks_still_works(self):
+        root = self.project()
+        lock = os.path.join(root, "mintmap.lock")
+        self.assertEqual(self.cli("init", root).returncode, 0)
+        with open(lock) as fh:
+            data = json.load(fh)
+        for p in data["paths"]:
+            p.pop("review", None)
+        with open(lock, "w") as fh:
+            json.dump(data, fh)
+        r = self.cli("accept", root, "--group", "kind:session", "--group", "kind:token", "--reviewer", "bob")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(self.cli("accept", root, "--all", "--reviewer", "bob").returncode, 0)
+        self.assertEqual(self.cli("diff", root).returncode, 0)
 
 
 if __name__ == "__main__":

@@ -4,7 +4,7 @@
   mintmap init   <project_dir> [--lock mintmap.lock] [--force]
   mintmap update <project_dir> [--lock mintmap.lock]
   mintmap diff   <project_dir> [--lock mintmap.lock] [--json findings.json]
-  mintmap accept <project_dir> (ID... | --all) --reviewer NAME [--note TEXT] [--lock mintmap.lock]
+  mintmap accept <project_dir> (ID... | --group GROUP | --all) --reviewer NAME [--note TEXT] [--lock mintmap.lock]
 
 Project code is parsed with `ast`; it is never imported or executed.
 Exit code 128 means MintMap could not run (bad arguments, lock or catalog, or an internal error).
@@ -21,6 +21,7 @@ from .core.analysis import Analysis
 from .core.catalog import load_catalog, DEFAULT_CATALOG, CatalogError
 from .core.lockfile import build_lock, merge_lock, diff, dump, BIT_NAMES
 from .core.project import DEFAULT_EXCLUDED_DIRS
+from .core import review
 
 EXIT_ERROR = 128
 
@@ -40,6 +41,71 @@ def run_scan(args) -> dict:
                     chain_limit=args.chain_limit, include_tests=args.include_tests, library_paths=lib).run()
 
 
+def _where(m: dict, entry: dict) -> str:
+    if m.get("site"):
+        return f"{m['site']['function']}:{m['site']['line']}"
+    return f"library, via {m.get('provided_via')}" if m.get("provided_via") else entry.get("view") or "library"
+
+
+def review_queue(report: dict) -> list:
+    """(v6b) The day-one review queue: confirmed paths grouped by credential kind and entry point, candidate sites by
+    kind, each ranked by risk with the reason it was reported."""
+    paths = [p for p in report["paths"]]
+    cands = report.get("candidates", [])
+    settings = report.get("settings_groups", [])
+    for p in paths:
+        p.setdefault("review", review.path_review(p))
+    for c in cands:
+        c.setdefault("review", review.candidate_review(c))
+    groups: dict = {}
+    for p in paths:
+        groups.setdefault(p["review"]["group"], []).append(p)
+    cgroups: dict = {}
+    for c in cands:
+        cgroups.setdefault(c["review"]["group"], []).append(c)
+    n_entries = len(paths) + len(cgroups) + len(settings)
+    lines = [f"REVIEW QUEUE: {n_entries} lock entr{'y' if n_entries == 1 else 'ies'}: {len(paths)} path(s) in "
+             f"{len(groups)} credential kind(s), {len(cands)} candidate site(s) in {len(cgroups)} group entr"
+             f"{'y' if len(cgroups) == 1 else 'ies'}, {len(settings)} settings group(s). Highest risk first; "
+             f"'why' says why each entry was reported."]
+
+    def rkey(x):
+        return (review.RISK_ORDER.get(x["review"]["risk"], 9), -x["review"]["score"], x["entry"]["id"], x["id"])
+    for g in sorted(groups, key=review.group_key):
+        ps = groups[g]
+        cnt = {r: sum(1 for p in ps if p["review"]["risk"] == r) for r in ("high", "medium", "low")}
+        by_entry: dict = {}
+        for p in ps:
+            by_entry.setdefault(p["entry"]["id"], []).append(p)
+        lines.append(f"  {g}  {review.KINDS.get(g[5:], '')}: {len(ps)} path(s) from {len(by_entry)} entry point(s); "
+                     f"{cnt['high']} high, {cnt['medium']} medium, {cnt['low']} low")
+        for eid, eps in sorted(by_entry.items(), key=lambda kv: min(rkey(p) for p in kv[1])):
+            eps = sorted(eps, key=rkey)
+            lines.append(f"    {eid}" + (f"  ({len(eps)} paths)" if len(eps) > 1 else ""))
+            for p in eps:
+                m = p["mint"]
+                lines.append(f"      [{p['id']}] {p['review']['risk']:<6} {m['api']} at {_where(m, p['entry'])}")
+                lines.append(f"          why: {'; '.join(p['review']['why'])}")
+    for g in sorted(cgroups):
+        cs = sorted(cgroups[g], key=rkey)
+        cnt = {r: sum(1 for c in cs if c["review"]["risk"] == r) for r in ("high", "medium", "low")}
+        desc = ((report["coverage"].get("candidates") or {}).get("groups") or {}).get(g.split(":", 1)[1], {})
+        lines.append(f"  {g}  (one lock entry; lower confidence) {desc.get('description', '')}: {len(cs)} site(s); "
+                     f"{cnt['high']} high, {cnt['medium']} medium, {cnt['low']} low")
+        for c in cs:
+            reached = c["entry"].get("reached_from") or []
+            lines.append(f"      [{c['id']}] {c['review']['risk']:<6} {_where(c['mint'], c['entry'])}  reached from "
+                         f"{len(reached)} entry point(s): {', '.join(reached[:3])}{' ...' if len(reached) > 3 else ''}")
+            lines.append(f"          why: {c['candidate']['reason']}")
+    if settings:
+        lines.append(f"  settings  authentication settings, one lock entry per group: "
+                     f"{', '.join(g['id'] for g in settings)}")
+    lines.append("  after reviewing a group: mintmap accept <dir> --group <group> --reviewer NAME "
+                 "(groups: " + ", ".join(sorted(groups, key=review.group_key) + sorted(cgroups) +
+                                         (["settings"] if settings else [])) + ")")
+    return lines
+
+
 def summarize(report: dict) -> str:
     cov = report["coverage"]
     lines = [f"MintMap {report['tool']['version']}  project={report['project']}",
@@ -56,11 +122,15 @@ def summarize(report: dict) -> str:
              f"{cov.get('paths_shadowed', 0)} shadowed by an earlier route; shadowed routes: "
              f"{cov.get('routes_shadowed', 0)}, library sub-routes: {cov.get('library_subroutes_shadowed', 0)}, "
              f"possibly shadowed (conditional earlier route): {cov.get('routes_may_be_shadowed', 0)})"]
-    for p in report["paths"]:
+    lines += review_queue(report)
+    lines.append("PATH DETAILS (check evidence), in review-queue order")
+    order = sorted(report["paths"], key=lambda p: (review.group_key(p["review"]["group"]),
+                                                    review.RISK_ORDER.get(p["review"]["risk"], 9),
+                                                    -p["review"]["score"], p["entry"]["id"], p["id"]))
+    for p in order:
         m = p["mint"]
-        where = f"{m['site']['function']}:{m['site']['line']}" if m["site"] else f"library, via {m['provided_via']}"
         lines.append(f"  [{p['id']}] {p['entry']['id']}")
-        lines.append(f"      mints {m['api']} purpose={m['purpose']} at {where}")
+        lines.append(f"      mints {m['api']} purpose={m['purpose']} at {_where(m, p['entry'])}")
         ev = p["evidence"]
         lines.append(f"      evidence={ev['status']} factors={ev['factors']} complete={p['analysis_complete']} "
                      f"fingerprint_complete={p.get('fingerprint_complete', True)}")
@@ -74,23 +144,14 @@ def summarize(report: dict) -> str:
         for u in ev.get("unrecognized_checks", []):
             lines.append(f"        ? unrecognized check {u['call']} in {u['function']}:{u['line']} -> {u['target']} "
                          f"({u['reason']})")
-    cands = report.get("candidates", [])
     cs = cov.get("candidates") or {}
-    lines.append(f"candidates (lower confidence; one review entry per site, grouped by kind): {len(cands)} site(s); "
+    lines.append(f"candidates: {len(report.get('candidates', []))} site(s) (listed in the review queue); "
                  f"{cs.get('set_aside_count', 0)} session write(s) set aside")
-    for grp, info in (cs.get("groups") or {}).items():
-        members = [c for c in cands if c["candidate"]["group"] == grp]
-        if not members:
-            continue
-        lines.append(f"  candidates:{grp} ({info['description']}): {len(members)} site(s), "
-                     f"{info.get('high', 0)} high / {info.get('medium', 0)} medium")
-        for c in members:
-            m = c["mint"]
-            where = f"{m['site']['function']}:{m['site']['line']}" if m.get("site") else c["entry"]["view"]
-            reached = c["entry"].get("reached_from") or []
-            lines.append(f"    [{c['id']}] {c['candidate']['rank']:<6} {where}  reached from {len(reached)} entry "
-                         f"point(s): {', '.join(reached[:3])}{' ...' if len(reached) > 3 else ''}")
-            lines.append(f"        {c['candidate']['reason']}")
+    cc = cov.get("custom_credentials") or {}
+    aside = len(cc.get("set_aside") or []) + len(cc.get("session_lookups_set_aside") or [])
+    if aside:
+        lines.append(f"custom-credential heuristic: {aside} random value(s) / session lookup(s) set aside as not "
+                     f"credentials (see --json coverage.custom_credentials)")
     off = cov.get("library_flows_disabled_by_settings") or []
     if off:
         lines.append(f"library flows switched off by settings (not paths; enabling one is a new path): {len(off)}")
@@ -128,8 +189,8 @@ def _load_lock(lock_path: str):
 
 def run_accept(args, lock_path: str) -> int:
     """Mark lock entries accepted. This records a review decision; it does not re-scan the code."""
-    if not args.ids and not args.all:
-        print("mintmap: give entry ids to accept, or --all", file=sys.stderr)
+    if not args.ids and not args.all and not args.group:
+        print("mintmap: give entry ids to accept, --group GROUP, or --all", file=sys.stderr)
         return EXIT_ERROR
     lock = _load_lock(lock_path)
     if lock is None:
@@ -138,6 +199,18 @@ def run_accept(args, lock_path: str) -> int:
     chosen = []
     if args.all:
         chosen = [e for e in entries if e.get("review_status") != "accepted"]
+    # (v6b) a review group of the report's review queue: kind:<credential kind>, candidates:<kind>, settings
+    groups: dict = {}
+    for e in entries:
+        groups.setdefault(review.lock_entry_group(e), []).append(e)
+    for g in args.group or []:
+        if g not in groups:
+            print(f"mintmap: no lock entries in group {g!r} (groups in this lock: {', '.join(sorted(groups))})",
+                  file=sys.stderr)
+            return EXIT_ERROR
+        for e in groups[g]:
+            if e not in chosen:
+                chosen.append(e)
     for want in args.ids:
         hits = [e for e in entries if e["id"] == want]
         if not hits and len(want) >= 8:
@@ -188,6 +261,9 @@ def main(argv=None) -> int:
     sp.add_argument("project_dir")
     sp.add_argument("ids", nargs="*", help="path ids (or unique prefixes of 8+ characters) and settings ids")
     sp.add_argument("--all", action="store_true", help="accept every entry that is not accepted yet")
+    sp.add_argument("--group", action="append",
+                    help="(v6b) accept every entry of a review group shown by `scan`: kind:session, kind:token, "
+                         "kind:precursor, kind:custom, kind:other, candidates:<kind> or settings; repeatable")
     sp.add_argument("--reviewer", required=True, help="who reviewed the entries (stored in the lock)")
     sp.add_argument("--note", default="", help="policy note stored with each accepted entry")
     sp.add_argument("--lock", help="lock file (default: <project_dir>/mintmap.lock)")
