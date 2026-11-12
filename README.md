@@ -25,9 +25,10 @@ than telling you *that the set of ways in has changed*.
    *Since 0.6.0.dev0 (not yet evaluated on fresh projects):* it also lists lower-confidence **candidates**:
    hand-written session state (logins, MFA / step-up / impersonation state, session hand-offs), passwords set
    from a value the code does not generate, the request handed to an authentication-library function the catalog
-   does not describe, and unregistered subclasses of minting middleware or views. Candidates are traced,
-   fingerprinted and diffed like paths, but reviewed as one lock entry per kind (`candidates:<kind>`) whose
-   sites are ranked and carry the reason they were reported.
+   does not describe, unregistered subclasses of minting middleware or views, and project code that authenticates
+   requests itself (DRF authentication classes, `request.user = ...` after a credential check). Candidates are
+   traced, fingerprinted and diffed like paths, but reviewed as one lock entry per kind (`candidates:<kind>`)
+   whose sites are ranked and carry the reason they were reported.
 3. **Records the checks it can see on the way**: password, TOTP, WebAuthn, token signature, permission gates, and
    a best-effort judgement of whether each check's result decides the outcome. This evidence is often weaker than
    the truth and sometimes wrong (see [Accuracy](#accuracy)).
@@ -111,10 +112,10 @@ its tests) in the same job before MintMap: anything that runs in the job can rep
 | 16 | `purpose_changed` | the credential issued on a path changed kind |
 | 32 | `coverage_regression` | MintMap can analyse less than before (new gaps, parse failures, changed roots) |
 | 64 | `unreviewed` | lock entries not yet accepted |
+| 128 | `error` | MintMap could not run (bad arguments, missing or invalid lock, catalog error, or an internal error) |
 
 A candidate group (`candidates:<kind>`) uses the same bits for its sites (a new site sets 1, a vanished one 2, a
 changed one 4, naming new or lost entry points); its findings carry `"tier": "candidate"`.
-| 128 | `error` | MintMap could not run (bad arguments, missing or invalid lock, catalog error, or an internal error) |
 
 Formatting, comments, docstrings and renamed local variables are normalised and do not change fingerprints. Simple
 extractions of a helper function in the same module are normalised too, but extracting a method, extracting a
@@ -166,7 +167,8 @@ measured on projects the tool was not developed against yet.
 - Library URL builder functions (allauth headless `build_urlpatterns()`): reported as gaps, not linked.
 - Checks reached through runtime-built backends, forms or settings helpers: they may sit outside every
   fingerprint, so weakening them can pass `diff`.
-- Session step-up grants, admin-chosen passwords, multi-request flows, and token *consumers* are not modelled.
+- Session step-up grants, admin-chosen passwords, multi-request flows, and token *consumers* are not modelled
+  (0.6.0.dev0: step-up state, admin-chosen passwords and project request authenticators are candidates).
 - Django only. Library knowledge covers Django auth, DRF, SimpleJWT, knox, djoser, dj-rest-auth, django-allauth,
   social-auth, django-otp, two-factor-auth, sesame, oauth-toolkit and a few more (15 packages). Other libraries
   usually show up as gaps, but not always (see [Accuracy](#accuracy)).
