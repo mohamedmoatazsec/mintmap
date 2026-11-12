@@ -44,11 +44,13 @@ GROUPS = {
                         "registered or routed",
     "request_authenticator": "project code that authenticates a request from a credential it reads (a DRF "
                              "authentication class, `request.user = ...`): a request-scoped login",
+    "startup_only": "a mint site that only start-up, deploy or command-line code reaches (AppConfig.ready(), "
+                    "settings / import-time calls, management commands, migration defaults): not a request path",
 }
 PURPOSES = {"session_state": "candidate_session_state", "password_set": "candidate_password_set",
             "auth_library_call": "candidate_library_auth_flow", "minting_subclass": "candidate_minting_subclass",
-            "request_authenticator": "candidate_request_authentication"}
-RANK_ORDER = {"high": 0, "medium": 1}
+            "request_authenticator": "candidate_request_authentication", "startup_only": "candidate_startup_only"}
+RANK_ORDER = {"high": 0, "medium": 1, "low": 2}
 
 # words of a session key that name authentication state (identifier parts, lower case)
 AUTH_STATE_WORDS = {

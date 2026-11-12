@@ -3369,10 +3369,10 @@ class Analysis:
     def candidate_summary(self, candidates) -> dict:
         by = {}
         for c in candidates:
-            row = by.setdefault(c["candidate"]["group"], dict(sites=0, high=0, medium=0))
+            row = by.setdefault(c["candidate"]["group"], dict(sites=0, high=0, medium=0, low=0))
             row["sites"] += 1
             row[c["candidate"]["rank"]] = row.get(c["candidate"]["rank"], 0) + 1
-        return dict(groups={g: dict(by.get(g, dict(sites=0, high=0, medium=0)), description=d)
+        return dict(groups={g: dict(by.get(g, dict(sites=0, high=0, medium=0, low=0)), description=d)
                             for g, d in CANDIDATE_GROUPS.items()},
                     sites=len(candidates),
                     set_aside_count=len(self.candf.set_aside),
@@ -3389,7 +3389,10 @@ class Analysis:
                                              for m, v in sorted(self.cred.default_models.items())},
             set_aside=sorted(self.cred.rejected, key=lambda r: (r["function"], r["line"])),
             unreferenced_functions_set_aside=sorted(self.unreferenced_set_aside,
-                                                    key=lambda r: (r["function"], r["line"], r["mint"])))
+                                                    key=lambda r: (r["function"], r["line"], r["mint"])),
+            # (v6b) values read from the session that look up an object that is not a principal
+            session_lookups_set_aside=sorted(self.cred.session_lookups_set_aside,
+                                             key=lambda r: (r["function"], r["line"], r["key"])))
 
     def _unreferenced_function(self, fq) -> bool:
         """(v6) A module-level function without decorators whose name appears nowhere else in the analysed project
@@ -3417,6 +3420,75 @@ class Analysis:
                     refs[k] = refs.get(k, 0) + 1
             self._name_refs = refs
         return not self._name_refs.get(fq.rsplit(".", 1)[-1])
+
+    APPCONFIG_BASES = ("django.apps.AppConfig", "django.apps.config.AppConfig")
+    COMMAND_BASES = ("django.core.management.BaseCommand", "django.core.management.base.BaseCommand")
+
+    def startup_kind(self, root) -> str:
+        """(v6b) Why a root of an unrouted path runs only at start-up, deploy time or from the command line ('' if
+        it may run in a request): `AppConfig.ready()`, a management command's `handle()`, a function called by
+        module-level code (import time, e.g. from a settings module), or a module-level function that only
+        Django migrations name (a historical field default)."""
+        info = self.p.functions.get(root)
+        if info is None:
+            return ""
+        if info.cls and not info.parent:
+            mro = self.p.mro(info.cls)
+            leaf = root.rsplit(".", 1)[-1]
+            if leaf == "ready" and any(b in mro for b in self.APPCONFIG_BASES):
+                return "AppConfig.ready() at start-up"
+            if leaf == "handle" and any(b in mro for b in self.COMMAND_BASES):
+                return "management command"
+            return ""
+        if info.parent:
+            return ""
+        if root in self.import_time_calls():
+            return "called by module-level code at import time"
+        if not info.node.decorator_list and self._unreferenced_function(root) and \
+                self._migration_refs().get(root.rsplit(".", 1)[-1]):
+            return "named only by Django migrations (deploy time)"
+        return ""
+
+    def import_time_calls(self) -> set:
+        """(v6b) Project functions called by module-level code (outside every def; class bodies included)."""
+        hit = getattr(self, "_import_time_calls", None)
+        if hit is not None:
+            return hit
+        out = set()
+        for mname, mod in self.p.modules.items():
+            stack = list(mod.tree.body)
+            while stack:
+                n = stack.pop()
+                if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
+                    continue
+                if isinstance(n, ast.Call):
+                    q = None
+                    if isinstance(n.func, ast.Name):
+                        q = self.p.lookup_symbol(mname, n.func.id)
+                    elif isinstance(n.func, ast.Attribute) and isinstance(n.func.value, ast.Name):
+                        base = self.p.lookup_symbol(mname, n.func.value.id)
+                        q = f"{base}.{n.func.attr}" if base else None
+                    q = self.p.canonical(q) if q else None
+                    if q in self.p.functions:
+                        out.add(q)
+                stack.extend(ast.iter_child_nodes(n))
+        self._import_time_calls = out
+        return out
+
+    def _migration_refs(self) -> dict:
+        hit = getattr(self, "_mig_refs", None)
+        if hit is not None:
+            return hit
+        refs: dict = {}
+        for mname, mod in self.p.modules.items():
+            if ".migrations." not in f".{mname}.":
+                continue
+            for n in ast.walk(mod.tree):
+                k = n.attr if isinstance(n, ast.Attribute) else n.id if isinstance(n, ast.Name) else None
+                if k:
+                    refs[k] = refs.get(k, 0) + 1
+        self._mig_refs = refs
+        return refs
 
     def unrouted_paths(self, reached, all_path_gaps) -> list:
         out = []
@@ -3459,6 +3531,16 @@ class Analysis:
                 roots = {fq}  # recursion-only cycle
             # (v6) Django data migrations run under `manage.py migrate`, never in a request
             roots = {r for r in roots if ".migrations." not in f".{r}."}
+            if cinfo is None and roots:
+                # (v6b) code that only start-up / deploy / command-line code reaches is not a request path: it is
+                # kept visible (fingerprinted, diffed) as a low-ranked candidate instead of a confirmed path
+                kinds = {r: self.startup_kind(r) for r in roots}
+                if all(kinds.values()):
+                    why = sorted(set(kinds.values()))
+                    cinfo = dict(group="startup_only", rank="low", signals=why,
+                                 reason=f"{api.symbol} in {fq} is reached only from start-up / deploy / command-line "
+                                        f"code ({'; '.join(why)}): no URL route, middleware or authentication class "
+                                        f"reaches it")
             for root in sorted(roots)[:10]:
                 rinfo = self.p.functions[root]
                 e = Entry(id=f"unrouted:{root}", kind="unrouted", view=root, funcs=[(root, rinfo.cls, "unrouted")],

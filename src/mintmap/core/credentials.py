@@ -63,6 +63,12 @@ STRONG = {"token", "tokens", "secret", "secrets", "otp", "totp", "hotp", "passwo
           "activation", "confirmation"}
 WEAK = {"key", "keys", "code", "codes", "pin", "session"}
 POSITIVE = STRONG | WEAK
+# (v6b) words that say what a value IS (nouns); the other strong words (`reset`, `verification`, `recovery`,
+# `magic`, `activation`, `confirmation`) qualify a credential but do not name one: a callable named only by them
+# (`reset(v)`) is not a place where a credential is kept
+CALL_NOUNS = POSITIVE - {"reset", "verification", "recovery", "magic", "activation", "confirmation"}
+# (v6b) callables that consume / compare a value rather than keep it
+CONSUMER_VERBS = {"check", "verify", "validate", "compare", "is", "has", "match", "matches", "test", "confirm"}
 # a weak word next to one of these is strong: `session_key`, `api_key`, `login_code`, `auth_key`, `device_pin`
 QUALIFIERS = {"session", "api", "auth", "access", "login", "signin", "signup", "account", "device", "backup"}
 # sources that are mostly identifier generators: a value from them needs a strong credential word
@@ -151,6 +157,7 @@ class CredentialHeuristics:
         self.candidates: dict = {}       # id(call node) -> Candidate
         self.default_models: dict = {}   # model qualname -> [(field, generator description, purpose)]
         self.rejected: list = []         # (where, line, names, reason) for the coverage report
+        self.session_lookups_set_aside: list = []   # (v6b) session ids of non-principal objects
         self.default_field_nodes: dict = {}   # (v5 review) model class -> [(field, field statement, generator)]
         self._default_gen_seen: set = set()
         self._relevant = None
@@ -657,7 +664,11 @@ class CredentialHeuristics:
                 t.sinks.append(Sink("cache", qn, n.lineno, names, _ctx_names(n, holders), frozenset(labs),
                                     f"{_u(n.func)}(...)", principal=per_subject))
             return
-        if leaf and _words_hit(words(leaf), POSITIVE) and leaf not in SOURCE_LEAVES:
+        if leaf and _words_hit(words(leaf), CALL_NOUNS) and leaf not in SOURCE_LEAVES and \
+                _first_word(leaf) not in CONSUMER_VERBS:
+            # (v6b) a callable is a place where a credential is kept only when its name says WHAT it keeps (a
+            # credential noun: `store_token`, `set_password`); an action word alone (`reset(...)`, `ContextVar.reset`)
+            # is not, and a predicate (`check_token(v)`, `verify_code(v)`) consumes a value, it does not keep one
             args = list(n.args) + [k.value for k in n.keywords]
             labs = set()
             for a in args:
@@ -898,15 +909,96 @@ class CredentialHeuristics:
                     for x in ast.walk(k.value):
                         ks |= self.session_key_read(x, info)
                     ks |= {kk for x in ast.walk(k.value) if isinstance(x, ast.Name) for kk in held.get(x.id, ())}
+                    if not ks:
+                        continue
+                    m = self._lookup_model(n.func, info) or self._shortcut_model(n, info)
+                    why = self._not_a_principal_lookup(k.arg, m, n, info)
+                    if why:
+                        # (v6b) the session holds the id of an event, a payment, a workspace ...: flow state
+                        for key in ks:
+                            self.session_lookups_set_aside.append(dict(function=qn, line=n.lineno, key=key,
+                                                                       reason=why))
+                        continue
                     for key in ks:
                         if qn not in out.setdefault(key, []):
                             out[key].append(qn)
-                    if ks and k.arg in ("pk", "id"):
-                        m = self._lookup_model(n.func, info)
-                        if m:
-                            principals.add(m)
+                    if k.arg in ("pk", "id") and m:
+                        principals.add(m)
         self._principal_models = principals
         return out
+
+    PRINCIPAL_MODEL_NOUNS = {"user", "users", "customer", "customers", "member", "members", "account", "accounts",
+                             "principal", "owner", "staff", "admin", "person", "identity", "profile"}
+    PASSWORD_ATTRS = {"password", "password_hash", "hashed_password", "passcode", "pin_hash"}
+
+    def principal_like(self, model) -> bool:
+        """(v6b) A model that can be the principal of a session: the user model, a model named after a principal
+        (`Customer`, `Member`, `Account`), or one that keeps a password (a field or `check_password`)."""
+        if not model:
+            return False
+        if self.is_user_model(model):
+            return True
+        if words(model.rsplit(".", 1)[-1]) & self.PRINCIPAL_MODEL_NOUNS:
+            return True
+        for c in self.p.mro(model):
+            ci = self.p.classes.get(c)
+            if ci is not None and (set(ci.attrs) & self.PASSWORD_ATTRS or
+                                   {"check_password", "set_password"} & set(ci.methods)):
+                return True
+        return False
+
+    def _not_a_principal_lookup(self, kwarg, model, call, info) -> str:
+        """(v6b) Why a lookup by a value read from the session does NOT load a principal ('' when it may): the
+        looked-up model is a project model that is not principal-like (an event, a payment, a workspace), the
+        lookup keyword names no principal (`event_id=`), and the object is not attached to the request
+        (`request.customer = ...`)."""
+        if kwarg not in ("pk", "id") and words(kwarg) & self.PRINCIPAL_MODEL_NOUNS:
+            return ""
+        if model is None or not self.is_model(model) or self.principal_like(model):
+            return ""
+        if self._attached_to_request(call, info):
+            return ""
+        return f"looks up {model.rsplit('.', 1)[-1]} (not a user / customer / account model) by `{kwarg}=`"
+
+    def _attached_to_request(self, call, info) -> bool:
+        parents = self._parents(info)
+        node, stmt = call, None
+        while node is not None:
+            node = parents.get(id(node))
+            if isinstance(node, ast.stmt):
+                stmt = node
+                break
+        targets = stmt.targets if isinstance(stmt, ast.Assign) else [stmt.target] \
+            if isinstance(stmt, (ast.AnnAssign, ast.AugAssign)) else []
+        names = {t.id for t in targets if isinstance(t, ast.Name)}
+
+        def on_request(t):
+            return isinstance(t, ast.Attribute) and "request" in _u(t.value)
+        if any(on_request(t) for t in targets):
+            return True
+        if names:
+            for n in self.p.walk_function_body(info.node):
+                if isinstance(n, ast.Assign) and isinstance(n.value, ast.Name) and n.value.id in names and \
+                        any(on_request(t) for t in n.targets):
+                    return True
+        return False
+
+    SHORTCUTS = {"get_object_or_404", "get_list_or_404", "aget_object_or_404", "aget_list_or_404"}
+
+    def _shortcut_model(self, call, info):
+        """(v6b) The model of `get_object_or_404(M, pk=...)` (also a queryset `M.objects.filter(...)`)."""
+        leaf = call.func.attr if isinstance(call.func, ast.Attribute) else \
+            call.func.id if isinstance(call.func, ast.Name) else ""
+        if leaf not in self.SHORTCUTS or not call.args:
+            return None
+        a = call.args[0]
+        if isinstance(a, (ast.Name, ast.Attribute)):
+            m = self._resolve_static(info.module, a, info)
+            if m and self.is_model(m):
+                return m
+        if isinstance(a, ast.Call) and isinstance(a.func, ast.Attribute):
+            return self._lookup_model(a.func, info)
+        return None
 
     def _lookup_model(self, f, info):
         """The project model a `.get/.filter(...)` lookup reads: `M.objects.get`, `<x>.<reverse accessor>.get`."""
@@ -1104,6 +1196,11 @@ class CredentialHeuristics:
         owner_words = words(sink.owner) if sink.owner else set()
         if (owner_words | words(sink.receiver)) & NEGATIVE_OWNER:
             return None, f"kept on {sink.owner} ({', '.join(sorted(owner_words & NEGATIVE_OWNER))}: an outbound " \
+                         f"integration secret, not a login credential)"
+        if sink_words & NEGATIVE_OWNER:
+            # (v6b) `webhook_token`, `callback_secret`: the integration word qualifies the credential noun, whatever
+            # the head noun is (an integration secret, not a login credential)
+            return None, f"kept as {sink.names} ({', '.join(sorted(sink_words & NEGATIVE_OWNER))}: an " \
                          f"integration secret, not a login credential)"
         neg = sorted(sink_words & NEGATIVE)
         # the head noun (last word) of a compound name decides between a credential word and a non-credential word:
@@ -1442,6 +1539,11 @@ def _leaf(f) -> str:
     return f.attr if isinstance(f, ast.Attribute) else (f.id if isinstance(f, ast.Name) else "")
 
 
+def _first_word(name: str) -> str:
+    parts = [p for p in _SPLIT.split(name or "") if p]
+    return parts[0].lower() if parts else ""
+
+
 def _head(name: str) -> str:
     parts = [p for p in _SPLIT.split(name or "") if p]
     return parts[-1].lower() if parts else ""
@@ -1455,8 +1557,10 @@ def _is_leaf_call(n, leaves) -> bool:
 
 
 def _qualified(ws: set) -> set:
-    """A weak credential word next to a qualifier is strong (`session_key` -> + sessionkey/secret marker)."""
-    if ws & WEAK and ws & QUALIFIERS:
+    """A weak credential word next to a qualifier is strong (`session_key` -> + sessionkey/secret marker).
+    (v6b) The qualifier must be another word: `session` is both, and `_session_wizard_prefix` is not qualified."""
+    weak, qual = ws & WEAK, ws & QUALIFIERS
+    if weak and qual and len(weak | qual) >= 2:
         return ws | {"credential"}
     return ws
 

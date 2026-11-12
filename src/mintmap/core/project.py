@@ -16,8 +16,10 @@ DEFAULT_EXCLUDED_DIRS = {".git", ".hg", ".svn", "node_modules", "__pycache__", "
                          ".tox", ".nox", "site-packages", "build", "dist", ".mypy_cache", ".pytest_cache"}
 
 # ---- test code (excluded by default; --include-tests keeps it) ----
+# (v6b) test-helper packages (`testutils/`, `test_utils/`) too; a module that non-test code imports is re-included
 TEST_DIR_NAMES = {"tests", "test"}
-TEST_FILE_RE = re.compile(r"^(test_.*|.*_test|.*_tests|tests|conftest)\.py$")
+TEST_HELPER_DIR_NAMES = {"testutils", "test_utils"}
+TEST_FILE_RE = re.compile(r"^(test_.*|.*_test|.*_tests|tests|testutils|conftest)\.py$")
 # modules with these names are test code only if they define TestCase subclasses (e.g. a BaseTestCase)
 TEST_SUPPORT_FILES = {"test.py", "testing.py"}
 
@@ -27,6 +29,8 @@ def test_path_reason(rel: str) -> str | None:
     parts = rel.split(os.sep)
     if any(d in TEST_DIR_NAMES for d in parts[:-1]):
         return "in a tests/ or test/ directory"
+    if any(d in TEST_HELPER_DIR_NAMES for d in parts[:-1]):
+        return "in a test-helper package (testutils/, test_utils/)"
     if TEST_FILE_RE.match(parts[-1]):
         return "test file name"
     return None
