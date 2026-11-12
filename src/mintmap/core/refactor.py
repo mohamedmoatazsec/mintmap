@@ -388,6 +388,8 @@ class Inliner:
             return None
         if receiver is not None:
             binding[s.params[0]] = receiver
+        if not _chains_not_rebound_by_calls(s, binding):
+            return None
         return s, binding
 
     def _instantiate(self, s: _Shape, binding: dict):
@@ -524,11 +526,67 @@ class Inliner:
                 n.ifs = [strip(x) for x in n.ifs]
 
 
+def _dotted(e):
+    """`a.b.c` for a Name / attribute chain, else None."""
+    parts = []
+    while isinstance(e, ast.Attribute):
+        parts.append(e.attr)
+        e = e.value
+    if not isinstance(e, ast.Name):
+        return None
+    return ".".join([e.id] + parts[::-1])
+
+
+def _chains_not_rebound_by_calls(s, binding) -> bool:
+    """(v6c) An attribute-chain argument (`request.team`, `self.account`) is read where the helper uses the
+    parameter instead of once at the call.  That is the same object only if nothing in the helper can rebind an
+    attribute of the chain: the helper assigns none of them (`_stable_argument`), and no call in the helper
+    receives an object the chain goes through (its base or an intermediate object) as an argument or as the
+    receiver of a method: `load_account(self, ...)` or `self.reload()` for `self.account`, `activate_team(request,
+    ...)` for `request.team`.  Values read from those objects (`request.user.pk`) and methods of the chained value
+    itself (`meta.get(...)`) are allowed; a call that reaches the object through a global (a thread-local request)
+    is not seen."""
+    prefixes = set()
+    for v in binding.values():
+        if isinstance(v, (ast.Name, ast.Constant)):
+            continue
+        d = _dotted(v)
+        if d is None:
+            continue
+        parts = d.split(".")
+        prefixes |= {".".join(parts[:i]) for i in range(1, len(parts))}
+    if not prefixes:
+        return True
+    texts = {p: _dotted(v) for p, v in binding.items()}
+
+    def caller_text(e):
+        d = _dotted(e)
+        if d is None:
+            return None
+        head, _, rest = d.partition(".")
+        if head not in texts or texts[head] is None:
+            return None
+        return texts[head] + ("." + rest if rest else "")
+
+    trees = list(s.stmts) + ([s.ret] if s.ret is not None else [])
+    for t in trees:
+        for n in ast.walk(t):
+            if not isinstance(n, ast.Call):
+                continue
+            if isinstance(n.func, ast.Attribute) and caller_text(n.func.value) in prefixes:
+                return False
+            for a in list(n.args) + [k.value for k in n.keywords]:
+                a = a.value if isinstance(a, ast.Starred) else a
+                if caller_text(a) in prefixes:
+                    return False
+    return True
+
+
 def _stable_argument(v, stored_attrs) -> bool:
     """(v6b) An argument that may be substituted for a parameter: a name, a constant, or an attribute chain on a
     name (`request.headers`, `self.request.META`) none of whose attributes the helper assigns or deletes.  A chain
-    is then read where the helper uses the parameter instead of once at the call: the same object, unless reading
-    the attribute has side effects (documented)."""
+    is then read where the helper uses the parameter instead of once at the call; (v6c) that is the same object
+    only when no call in the helper can rebind it either (`_chains_not_rebound_by_calls`)."""
     if isinstance(v, (ast.Name, ast.Constant)):
         return True
     n = v
