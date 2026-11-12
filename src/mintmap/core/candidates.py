@@ -17,6 +17,10 @@ structural reason to be reviewed, without enough evidence to be called a mint:
                      does not describe (a library flow called directly).
   minting_subclass   a project subclass of a catalogued minting middleware or view that MintMap did not see
                      registered or routed (MIDDLEWARE computed at run time, a view built dynamically).
+  request_authenticator  (v6, second part) project code that authenticates a request from a credential it reads:
+                     the `authenticate` / `authenticate_credentials` method of a project DRF authentication class,
+                     or a function that assigns `request.user = ...` itself.  A request-scoped login: weakening it
+                     lets requests in, but no confirmed path has to contain it.
 
 Candidates are traced to entry points like any mint, fingerprinted and diffed, but they are kept apart from the
 confirmed paths: one review entry per candidate SITE (whatever the number of entry points reaching it, all listed),
@@ -38,9 +42,12 @@ GROUPS = {
     "auth_library_call": "the HTTP request handed to an authentication-package function the catalog does not describe",
     "minting_subclass": "a project subclass of a catalogued minting middleware / view that MintMap did not see "
                         "registered or routed",
+    "request_authenticator": "project code that authenticates a request from a credential it reads (a DRF "
+                             "authentication class, `request.user = ...`): a request-scoped login",
 }
 PURPOSES = {"session_state": "candidate_session_state", "password_set": "candidate_password_set",
-            "auth_library_call": "candidate_library_auth_flow", "minting_subclass": "candidate_minting_subclass"}
+            "auth_library_call": "candidate_library_auth_flow", "minting_subclass": "candidate_minting_subclass",
+            "request_authenticator": "candidate_request_authentication"}
 RANK_ORDER = {"high": 0, "medium": 1}
 
 # words of a session key that name authentication state (identifier parts, lower case)
@@ -115,8 +122,91 @@ class CandidateFinder:
                 out += self._session_state(info)
             if seen & {"set_password", "aset_password", "make_password", "amake_password"}:
                 out += self._password_set(info)
+            out += self._request_authenticator(info, seen)
         self._memo[fq] = out
         return out
+
+    DRF_AUTH_METHODS = ("authenticate", "authenticate_credentials")
+    NOT_A_USER = {"AnonymousUser", "None"}
+
+    CREDENTIAL_CHECK_LEAVES = {"authenticate", "aauthenticate", "check_password", "acheck_password",
+                               "get_authorization_header", "verify_token", "check_token"}
+    REQUEST_INPUTS = {"META", "headers", "GET", "POST", "COOKIES", "query_params", "data"}
+    CREDENTIAL_LOOKUP_WORDS = {"token", "key", "apikey", "secret", "password", "digest"}
+    CREDENTIAL_INPUT_WORDS = {"authorization", "token", "key", "apikey", "secret", "password", "auth", "remote",
+                              "bearer", "signature"}
+
+    def _reads_credential(self, info) -> bool:
+        """(v6) The function verifies a credential (authenticate(), check_password(), a token check, a lookup by a
+        credential-named field) or reads one from the request (`request.META["HTTP_AUTHORIZATION"]`,
+        `request.headers.get("X-Api-Key")`, a `token` query parameter)."""
+        def key_words(e):
+            return words(e.value) if isinstance(e, ast.Constant) and isinstance(e.value, str) else set()
+
+        def is_input(e):
+            return isinstance(e, ast.Attribute) and e.attr in self.REQUEST_INPUTS
+
+        for n in self.p.walk_function_body(info.node):
+            if isinstance(n, ast.Call):
+                if _leaf(n.func) in self.CREDENTIAL_CHECK_LEAVES:
+                    return True
+                if any(k.arg and words(k.arg.replace("__", "_")) & self.CREDENTIAL_LOOKUP_WORDS for k in n.keywords):
+                    return True     # a lookup by a credential (`User.objects.get(auth_token__key=code)`)
+                if isinstance(n.func, ast.Attribute) and n.func.attr == "get" and is_input(n.func.value) and \
+                        n.args and key_words(n.args[0]) & self.CREDENTIAL_INPUT_WORDS:
+                    return True
+            elif isinstance(n, ast.Subscript) and is_input(n.value) and \
+                    key_words(n.slice) & self.CREDENTIAL_INPUT_WORDS:
+                return True
+        return False
+
+    def _is_drf_auth_class(self, cls) -> bool:
+        cat = self.a.catalog
+        return any(c.startswith("rest_framework.authentication.") or c in cat.library_drf_auth or
+                   c in cat.drf_auth_no_mint for c in self.p.mro(cls))
+
+    def _request_authenticator(self, info, seen) -> list:
+        """(v6) A request-scoped login in project code: a DRF authentication method that returns something (the
+        (user, auth) pair), or an assignment `request.user = <user>` (not AnonymousUser / None)."""
+        leaf = info.qualname.rsplit(".", 1)[-1]
+        hit, text = None, ""
+        if info.cls and leaf in self.DRF_AUTH_METHODS and self._is_drf_auth_class(info.cls):
+            for n in self.p.walk_function_body(info.node):
+                if isinstance(n, ast.Return) and n.value is not None and not (
+                        isinstance(n.value, ast.Constant) and n.value.value is None):
+                    hit, text = n, f"{info.cls.rsplit('.', 1)[-1]}.{leaf}() returns {_short_src(n.value)}"
+                    break
+        elif "user" in seen and "request" in seen and self._reads_credential(info):
+            for n in self.p.walk_function_body(info.node):
+                if not isinstance(n, ast.Assign):
+                    continue
+                for t in n.targets:
+                    if isinstance(t, ast.Attribute) and t.attr in ("user", "_cached_user", "_force_auth_user") and \
+                            _is_request(t.value):
+                        v = n.value
+                        names = {x.id for x in ast.walk(v) if isinstance(x, ast.Name)} | \
+                                {x.attr for x in ast.walk(v) if isinstance(x, ast.Attribute)}
+                        if (isinstance(v, ast.Constant) and v.value is None) or names & self.NOT_A_USER or \
+                                (isinstance(v, ast.Attribute) and _is_request(v.value)):
+                            continue      # logs out, or copies the request's own user
+                        hit, text = n, f"{_short_src(t)} = {_short_src(v)}"
+                        break
+                if hit is not None:
+                    break
+        if hit is None:
+            return []
+        for site in self.a.cg.sites(info.qualname):
+            if self.a.mint_of(site, self.a.cg.resolve(site, info.cls)):
+                return []     # a confirmed mint (login() ...) in the same function: that path covers it
+        reason = f"authenticates the request itself: {text}"
+        site = _pseudo_site(info.qualname, hit, text, "request_authenticator")
+        api = candidate_api("request_authenticator", f"request_authenticator[{info.qualname.rsplit('.', 2)[-2]}."
+                            f"{leaf}]" if info.cls else f"request_authenticator[{leaf}]",
+                            "candidate: " + GROUPS["request_authenticator"])
+        return [(site, api, reason, dict(group="request_authenticator", rank="medium", reason=reason,
+                                          signals=["drf_authentication" if info.cls and leaf in
+                                                   self.DRF_AUTH_METHODS else "request_user_assignment"],
+                                          keys=[text]))]
 
     def _value_signals(self, v, info, local, depth=0) -> set:
         sig = set()
@@ -313,6 +403,10 @@ class CandidateFinder:
         request-taking library call with no route are command-line / internal code."""
         if cinfo["group"] == "session_state":
             return True
+        if cinfo["group"] == "request_authenticator":
+            # (v6) DRF runs authentication classes named by views / settings in library code; a `request.user =`
+            # nothing routes to is a task, a command or a test helper building a request
+            return cinfo["signals"] == ["drf_authentication"]
         if cinfo["group"] == "password_set":
             info = self.p.functions.get(fq)
             leaf = fq.rsplit(".", 1)[-1]

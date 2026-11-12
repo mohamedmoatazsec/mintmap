@@ -12,6 +12,9 @@ written for these tests; no development-project code is copied.
                                calls or names is set aside until something does
     PredicateCallTests         `did_*` / `was_*` predicates of an authentication package are not auth_library_call
                                candidates
+    RequestAuthenticatorTests  candidate tier `request_authenticator`: project DRF authentication classes (settings
+                               default or a view attribute) and `request.user = ...` in project code are reviewed and
+                               fingerprinted; weakening one is a finding
 """
 import json
 import unittest
@@ -277,6 +280,120 @@ class PredicateCallTests(unittest.TestCase):
         rep = scan(project(self, {"conf/urls.py": urls, "club/pv.py": PREDICATE_VIEWS}, init=("conf", "club")))
         calls = [c["mint"]["api"] for c in rep["candidates"] if c["candidate"]["group"] == "auth_library_call"]
         self.assertEqual(calls, ["allauth.account.internal.flows.reauthentication.reauthenticate_by_password"])
+
+
+# ============================================================================ request authenticators
+AUTH_SETTINGS = """\
+SECRET_KEY = "fixture-only"
+INSTALLED_APPS = ["django.contrib.auth", "django.contrib.sessions", "rest_framework", "club"]
+MIDDLEWARE = ["django.contrib.sessions.middleware.SessionMiddleware"]
+ROOT_URLCONF = "conf.urls"
+REST_FRAMEWORK = {"DEFAULT_AUTHENTICATION_CLASSES": ["club.auth.KeyAuth"]}
+"""
+AUTH_CLASSES = """\
+from django.contrib.auth import get_user_model
+from rest_framework import authentication, exceptions
+
+from club.models import AccessKey
+
+
+class KeyAuth(authentication.TokenAuthentication):
+    keyword = "Key"
+
+    def authenticate_credentials(self, key):
+        try:
+            found = AccessKey.objects.select_related("owner").get(value=key)
+        except AccessKey.DoesNotExist:
+            raise exceptions.AuthenticationFailed("bad key")
+        if not found.owner.is_active:
+            raise exceptions.AuthenticationFailed("inactive")
+        return found.owner, found
+
+
+class HeaderAuth(authentication.BaseAuthentication):
+    def authenticate(self, request):
+        name = request.META.get("HTTP_X_MACHINE")
+        if not name:
+            return None
+        return get_user_model().objects.get(username=name), None
+"""
+AUTH_MODELS = """\
+from django.conf import settings
+from django.db import models
+
+
+class AccessKey(models.Model):
+    owner = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE)
+    value = models.CharField(max_length=64)
+"""
+AUTH_VIEWS = """\
+import base64
+
+from django.contrib.auth import authenticate
+from django.contrib.auth.models import AnonymousUser
+from django.http import HttpResponse
+from rest_framework.response import Response
+from rest_framework.views import APIView
+
+from club.auth import HeaderAuth
+
+
+class MachineStatus(APIView):
+    authentication_classes = [HeaderAuth]
+
+    def get(self, request):
+        return Response({"user": request.user.username})
+
+
+def git_endpoint(request):
+    raw = base64.b64decode(request.META.get("HTTP_AUTHORIZATION", "").split(" ")[-1]).decode()
+    name, _, secret = raw.partition(":")
+    user = authenticate(request, username=name, password=secret)
+    if user is None:
+        return HttpResponse(status=401)
+    request.user = user
+    return HttpResponse("refs")
+
+
+def leave(request):
+    request.user = AnonymousUser()
+    return HttpResponse("bye")
+"""
+AUTH_URLS = """\
+from django.urls import path
+
+from club import views
+
+urlpatterns = [path("machine/", views.MachineStatus.as_view()), path("git/", views.git_endpoint),
+               path("leave/", views.leave)]
+"""
+
+
+class RequestAuthenticatorTests(unittest.TestCase):
+    def setUp(self):
+        self.root = project(self, {"conf/urls.py": AUTH_URLS, "club/auth.py": AUTH_CLASSES,
+                                   "club/models.py": AUTH_MODELS, "club/views.py": AUTH_VIEWS},
+                            settings=AUTH_SETTINGS, init=("conf", "club"))
+        self.rep = scan(self.root)
+
+    def sites(self):
+        return {c["mint"]["site"]["function"]: c for c in self.rep["candidates"]
+                if c["candidate"]["group"] == "request_authenticator"}
+
+    def test_authenticators_are_candidates(self):
+        sites = self.sites()
+        self.assertEqual(sorted(sites), ["club.auth.HeaderAuth.authenticate", "club.auth.KeyAuth.authenticate_credentials",
+                                         "club.views.git_endpoint"])
+        self.assertEqual(sites["club.auth.KeyAuth.authenticate_credentials"]["entry"]["reached_from"],
+                         ["drf_auth_class:club.auth.KeyAuth"])
+        self.assertEqual(sites["club.views.git_endpoint"]["entry"]["reached_from"], ["route:git/|club.views.git_endpoint"])
+
+    def test_weakening_an_authenticator_is_a_finding(self):
+        findings, code = run_diff(self, self.root, lambda: replace_in(
+            self.root, "club/auth.py", "        if not found.owner.is_active:\n"
+                                       "            raise exceptions.AuthenticationFailed(\"inactive\")\n", ""))
+        self.assertTrue(code & 4, findings)
+        self.assertTrue([f for f in findings if f.get("group") == "candidates:request_authenticator"], findings)
 
 
 if __name__ == "__main__":
