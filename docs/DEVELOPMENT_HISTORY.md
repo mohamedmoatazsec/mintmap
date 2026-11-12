@@ -12,6 +12,9 @@
 > Current usage: [README.md](../README.md). Current results: [EVALUATION.md](EVALUATION.md). Review enforcement
 > and the GitHub Action: [ENFORCEMENT.md](ENFORCEMENT.md).
 >
+> v6 (0.6.0.dev0) was developed in the release package (`src/mintmap/`) and is summarised in the first section
+> below; it has not been evaluated on fresh projects.
+>
 > Changes in release 0.5.0a1 after this log: fingerprints, gap keys and settings values use a
 > Python-version-independent AST dump and unparser (identical to the evaluated ones on Python 3.13, except that
 > non-ASCII string literals are escaped in the dump); the lock records the Python version
@@ -41,6 +44,128 @@ paths, changed evidence, or reduced analysis coverage.
 
 This is a prototype for evaluating an idea. It is **not** a vulnerability scanner. Its
 labels describe *what the analysed code shows*. They are not security verdicts.
+
+## What changed in v6 (0.6.0.dev0; developed in the release package, not yet evaluated on fresh projects)
+
+Round 3 (frozen v5 on InvenTree, Weblate, pretix; see [EVALUATION.md](EVALUATION.md)) missed 45 of 149 units with
+no visible gap and 18 of 58 harmful mutations passed `diff`; v4 had the same silent rate on its own held-out set, so
+fixes tuned on development projects did not transfer. v6 therefore adds broad structural rules, above all a
+**candidate tier** that makes new shapes visible and diffable at low review cost, plus false-alarm reductions. Those
+three projects are now development projects; the evaluation of v6 needs fresh ones. Every rule has a synthetic
+fixture test (`tests/test_v6.py`, 30 tests; `tests/test_v6b.py`, 19 tests; no project code copied).
+
+**Harness (A0).** `run_all.py` / `units.json` cover all eight development projects: the saved mutations of InvenTree,
+Weblate and pretix with their labels, the verifiers' own probes (InvenTree v1-v6, Weblate v1, pretix y1-y3) and 149
+recall units with the verifier-corrected verdicts. The unit scorer reproduces every verified v5 verdict on the frozen
+v5 scans (44/44, 36/36, 69/69: tolerance 0), and a false-alarm classifier (adjudicated FALSE_ALARM paths matched by
+path id or by entry + mint + mint-site function; grouped entries by member keys) reproduces the adjudicated counts
+(17, 61, 49) with no unadjudicated path. Paths a run reports that nobody adjudicated are counted separately as an
+upper bound on new false alarms. Baseline: label `v5r` (the release copy of v5).
+
+**Candidate tier** (`core/candidates.py`). A candidate is a site with a general structural reason to be reviewed but
+not enough evidence to be called a mint. Candidates are traced to entry points, fingerprinted and diffed like paths,
+but each SITE is one review entry (all entry points listed in `reached_from`), grouped per kind in the lock
+(`candidates:<kind>`), ranked (high / medium) and carrying its reason. Kinds:
+`session_state` (session writes that re-key the session with an identifier / hash, copy a session key or a value of
+another session, hand out a new SessionStore, or keep an identifier / hash / timestamp / flag / signed marker under an
+auth-named key; ordinary UI state is set aside and counted), `password_set` (a password set from a value the code does
+not generate, not the signed-in user's own), `auth_library_call` (the request handed to an authentication-package
+function the catalog does not describe; accessors and `did_*` / `was_*` predicates excluded), `minting_subclass` (an
+unregistered project subclass of a catalogued minting middleware / view), and `request_authenticator` (the
+`authenticate` / `authenticate_credentials` method of a project DRF authentication class; a routed function that sets
+`request.user` after verifying or reading a credential). A new, vanished or changed member sets the usual bits.
+
+**Recall rules (confirmed tier).**
+* Session keys are compared as patterns (f-strings, `str.format`, `%`, `+`, locals, module constants) and read
+  through session aliases and SessionStore objects (hand-rolled logins with run-time keys).
+* Creation through a reverse relation (`team.tokens.create(...)`) and Django CreateView saves of credential models;
+  a `post_save` receiver whose body is `if created:` is not reached by an update save.
+* A catalogued library function view called directly (`return complete(request, backend)`) mints at the calling
+  route, with the project hooks its settings name.
+* Settings computed by calls keep the items they can read (getter defaults, pass-through functions, comprehension
+  filters, conditional expressions) and mark the rest (`setting_partially_unknown`); settings returned by a project
+  factory function are evaluated; settings assigned at run time in project code (`AppConfig.ready()`) are one more
+  alternative (`setting_changed_at_run_time`).
+* An admin site swapped inside a function or through `AdminConfig.default_site`; catalogued URL builders
+  (`allauth.headless.urls.build_urlpatterns`, narrowed by its client argument); unknown library helpers that wrap
+  `path()` are read as conditional routes with a gap; admin-chosen passwords (`UserAdmin.add_view`).
+* URLconf: `api_urls = router.urls` referenced from another module is the router's routes (InvenTree's whole admin
+  API was a global gap); an instance of a project class with `__call__` used as a view is routed to `__call__`.
+* Module names: a reference that resolves from the project directory is not evidence for a deeper source root
+  (`plugin/machine/` next to `machine/` had made `plugin` an alias of `plugin.plugin`), and an alias never rewrites a
+  real module name.
+
+**Change detection.** Reading a project `@property` / `@cached_property` on `self` is an edge to its getter; the
+values of a class-level dict a view picks from (`forms = {"totp": TotpForm, ...}`) are injected code; for
+`x.m(...)` with an untyped receiver, the project methods named `m` (non-generic name, at most 3 definitions) join the
+callee closure (fingerprint only).
+
+**False-alarm reductions.**
+* URL-prefix twins (`if not PREFIX: urlpatterns = x else: [path(PREFIX, include(x))]`) are one entry.
+* Catalog `library_flow_conditions` (django-allauth 65.20.0, cited): a library flow is not a path when every enabling
+  condition is statically false (HEADLESS_ONLY for the headed flows of `allauth.urls`, `allauth.mfa` /
+  `allauth.socialaccount` not installed, ACCOUNT_LOGIN_ON_PASSWORD_RESET / LOGIN_ON_EMAIL_CONFIRMATION left at their
+  default, ACCOUNT_LOGOUT_ON_PASSWORD_CHANGE, MFA_PASSKEY_LOGIN_ENABLED, MFA_TRUST_ENABLED); such flows are listed in
+  `coverage.library_flows_disabled_by_settings`, unknown values keep the flow, and enabling one later is a new path.
+* Generic signing / JWT primitives are mints only for credential-like values (kept under a credential name, or
+  signing a principal identifier); updates are not creations (perform_update / UpdateView form saves,
+  `perform_destroy(instance)`, read-only DRF viewsets have no create flow, from the DRF class method lists);
+  heuristic generators that no project code calls or names are set aside; heuristic sites reached from 3 or more
+  entry points (was 6) are one lock entry; heuristic-site entries are line-independent.
+
+Changed earlier expectations: `test_v5b.SettingsGroupTests.test_catalog_flow_setting_is_a_dependency_of_that_flow_only`
+uses ACCOUNT_LOGIN_TIMEOUT (a False ACCOUNT_LOGIN_ON_PASSWORD_RESET now switches its flow off);
+`test_v5c.ReviewNoiseTests.test_few_entry_points_keep_one_path_each` uses 2 entry points; the `testcode_project`
+fixture signs a principal id (an unkeyed signed order id is no longer a mint); `mm_testutil.accept_all` also accepts
+candidate groups.
+
+### Before / after (regression harness: `v5r` = release copy of v5, `v6a` = this tree)
+
+Same harness, same saved mutations and units; `--library-path` not used. "Recall" is the automatic unit scorer;
+"FA" counts reported paths and candidate sites that verifiers adjudicated FALSE_ALARM (v5) still reported / reported
+items nobody adjudicated (an upper bound on new false alarms; candidate sites in brackets). Lock entries: path entries
++ settings entries + candidate groups (candidate sites).
+
+| project | run | lock entries | recall exact / mint only / gap / **silent** | harmful caught / **silent** | harmless flagged | FA known / unadjudicated | scan s |
+|---|---|---|---|---|---|---|---|
+| Healthchecks | v5r | 32 + 6 | - | 6/6 / **0** | 0/3 | - | 2.7 |
+| | v6a | 27 + 6 + 1 (2) | - | 6/6 / **0** | 0/3 | - | 2.3 |
+| paperless-ngx | v5r | 33 + 7 | 18 / 0 / 6 / **0** of 24 | 12/12 / **0** | 0/3 | 4 / 9 | 5.5 |
+| | v6a | 34 + 7 + 3 (8) | 18 / 0 / 6 / **0** of 24 | 12/12 / **0** | 0/3 | 4 / 18 (8) | 4.0 |
+| netbox | v5r | 9 + 9 | 10 / 1 / 2 / **2** of 15 | 11/11 / **0** | 0/3 | 0 / 3 | 23.0 |
+| | v6a | 9 + 9 + 3 (8) | 12 / 2 / 1 / **0** of 15 | 11/11 / **0** | 0/3 | 0 / 8 (5) | 17.2 |
+| plane | v5r | 35 + 7 | 25 / 0 / 0 / **0** of 25 | 11/11 / **0** | 0/6 | 3 / 6 | 10.4 |
+| | v6a | 35 + 7 + 2 (8) | 25 / 0 / 0 / **0** of 25 | 11/11 / **0** | 0/6 | 3 / 14 (8) | 8.1 |
+| InvenTree | v5r | 36 + 10 | 9 / 3 / 27 / **5** of 44 | 14/19 / **5** | 2/10 | 17 / 0 | 11.4 |
+| | v6a | 30 + 10 + 2 (7) | 26 / 3 / 15 / **0** of 44 | 19/19 / **0** | 2/10 | 5 / 8 (5) | 9.4 |
+| Weblate | v5r | 103 + 11 | 14 / 7 / 3 / **12** of 36 | 13/21 / **8** | 1/5 | 61 / 0 | 37.6 |
+| | v6a | 50 + 11 + 3 (13) | 26 / 6 / 2 / **2** of 36 | 21/21 / **0** | 1/5 | 19 / 16 (8) | 31.4 |
+| pretix | v5r | 91 + 9 | 33 / 7 / 1 / **28** of 69 | 13/18 / **5** | 1/5 | 49 / 0 | 32.3 |
+| | v6a | 88 + 9 + 3 (17) | 55 / 12 / 0 / **2** of 69 | 18/18 / **0** | 1/5 | 28 / 17 (9) | 30.8 |
+| Zulip (scan only) | v5r | 121 + 10 | - | - | - | - | 40.1 |
+| | v6a | 103 + 10 + 1 (2) | - | - | - | - | 37.0 |
+
+Totals: harmful mutations caught 80/98 -> **98/98** (round-3 projects 40/58 -> 58/58, including all 9 verifier
+probes); harmless changes flagged 4/35 -> 4/35 (the same four: three extract-method refactors and a log edit in a
+check closure). Recall on the round-3 projects (149 units, v5r reproduces the verified v5 numbers exactly): exact
+56 -> 107, mint only 17 -> 21, gap 31 -> 17, **silent 45 -> 4** (S 17 -> 0, T 12 -> 0, P 16 -> 4; 20 units are
+found only by candidates). Reported items on those projects 230 -> 205 (paths 168, candidate sites 37):
+adjudicated false alarms still reported 127 -> 52, unadjudicated 0 -> 41 (22 of them candidate sites). Every
+unmodified diff exits 0; locks written with Python 3.11 and 3.13 are identical (Healthchecks, paperless-ngx,
+InvenTree, pretix). These recall and mutation gains were obtained on the projects the fixes were built against.
+
+### v6 limits
+
+* All numbers above are on the development projects; InvenTree, Weblate and pretix were used to find the root
+  causes, so their recall says little about unseen code. Only a fresh evaluation can show whether the candidate
+  tier generalises.
+* Still silent on the development set: two e-mail validation links run by the social-auth pipeline (library code)
+  and an OAuth authorization code kept under the weak word `code` on a model linked to a non-user principal.
+* The candidate tier trades silence for review work: every site is listed with its reason, but day-one review now
+  includes the candidate groups.
+* Not done: completing the catalog for allauth headless and django-oauth-toolkit URLconfs (several units are still
+  `library_include_mints_incomplete` gaps); a signed value carrying only the signed-in user's id is still a confirmed
+  mint (it can be a session hand-off or an OAuth-like state).
 
 ## What changed in v5 (review round: 22 findings of two adversarial reviews of part B)
 
