@@ -1343,11 +1343,18 @@ class Analysis:
         return self._file_mods.get(rel)
 
     def _project_code_refs(self, modname, expr, func=None) -> list:
-        """Project classes / functions an expression names (a name, a dotted attribute, a list/tuple of them)."""
+        """Project classes / functions an expression names (a name, a dotted attribute, a list/tuple of them,
+        (v6) the values of a dict display or dict(...) call)."""
         if modname is None or expr is None:
             return []
         if isinstance(expr, (ast.List, ast.Tuple, ast.Set)):
             return [q for e in expr.elts for q in self._project_code_refs(modname, e, func)]
+        if isinstance(expr, ast.Dict):
+            # (v6) a mapping the view picks from at run time (`forms = {"totp": TotpForm, ...}` read by
+            # get_form_class): every value may run
+            return [q for e in expr.values if e is not None for q in self._project_code_refs(modname, e, func)]
+        if isinstance(expr, ast.Call) and isinstance(expr.func, ast.Name) and expr.func.id == "dict":
+            return [q for k in expr.keywords for q in self._project_code_refs(modname, k.value, func)]
         if isinstance(expr, (ast.Name, ast.Attribute)):
             q = self.p.resolve_expr_static(modname, expr, func)
             q = self.p.canonical(q) if q else None

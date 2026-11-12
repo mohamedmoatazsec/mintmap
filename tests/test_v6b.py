@@ -23,6 +23,8 @@ written for these tests; no development-project code is copied.
                                (`from plugin.base.x import urls`) absolute
     PropertyEdgeTests          reading a project @property / @cached_property on self runs its code: an owner
                                lookup in a getter is on the path, and changing it changes the fingerprint
+    FormMappingTests           a view that picks its form from a class-level dict (`forms = {"totp": TotpForm}`)
+                               runs every form of the dict: their methods are fingerprinted
 """
 import json
 import unittest
@@ -585,6 +587,66 @@ class PropertyEdgeTests(unittest.TestCase):
                       ps[0]["fingerprint"]["path_functions"])
         findings, code = run_diff(self, root, lambda: replace_in(
             root, "club/views.py", "Crew.objects.filter(members=self.request.user)", "Crew.objects.all()"))
+        self.assertTrue(code & 4, findings)
+
+
+# ============================================================================ forms picked from a mapping
+MAPPING_VIEWS = """\
+from django import forms
+from django.contrib.auth import get_user_model, login
+from django.http import HttpResponse
+from django.views.generic import FormView
+
+
+class CodeForm(forms.Form):
+    code = forms.CharField()
+
+    def __init__(self, *args, user=None, **kwargs):
+        self.user = user
+        super().__init__(*args, **kwargs)
+
+    def clean_code(self):
+        if not self.user.profile.check_code(self.cleaned_data["code"]):
+            raise forms.ValidationError("wrong code")
+        return self.cleaned_data["code"]
+
+
+class BackupForm(CodeForm):
+    def clean_code(self):
+        if self.cleaned_data["code"] not in self.user.profile.backup_codes:
+            raise forms.ValidationError("wrong code")
+        return self.cleaned_data["code"]
+
+
+class SecondStepView(FormView):
+    template_name = "step.html"
+    forms = {"code": CodeForm, "backup": BackupForm}
+
+    def get_form_class(self):
+        return self.forms[self.kwargs["kind"]]
+
+    def get_form_kwargs(self):
+        kwargs = super().get_form_kwargs()
+        kwargs["user"] = get_user_model().objects.get(pk=self.request.session["pending_user"])
+        return kwargs
+
+    def form_valid(self, form):
+        login(self.request, form.user)
+        return HttpResponse("in")
+"""
+
+
+class FormMappingTests(unittest.TestCase):
+    def test_every_form_of_the_mapping_is_fingerprinted(self):
+        urls = """\
+            from django.urls import path
+            from club.step import SecondStepView
+            urlpatterns = [path("step/<str:kind>/", SecondStepView.as_view())]
+        """
+        root = project(self, {"conf/urls.py": urls, "club/step.py": MAPPING_VIEWS}, init=("conf", "club"))
+        findings, code = run_diff(self, root, lambda: replace_in(
+            root, "club/step.py", "        if self.cleaned_data[\"code\"] not in self.user.profile.backup_codes:\n"
+                                  "            raise forms.ValidationError(\"wrong code\")\n", ""))
         self.assertTrue(code & 4, findings)
 
 
