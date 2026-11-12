@@ -952,6 +952,10 @@ class UrlConfParser:
                     q2 = self.p.canonical(q2) if q2 else None
                     if q2 and q2 != q and q2 != f"{m2}.{rest[0]}":
                         return self.struct_ref(q2, ctx, cond, prefix, expr, _depth + 1)
+            elif m2 and len(rest) == 2 and rest[1] == "urls" and rest[0] in self.routers(m2):
+                # (v6) `api_urls = router.urls` in another module, referenced as `mod.api_urls` (the static
+                # resolver follows the alias to `mod.router.urls`)
+                return [RouterOp(m2, rest[0], cond, prefix)]
             elif not m2:
                 module = q[:-len(".urlpatterns")] if q.endswith(".urlpatterns") else q
                 return [LibOp(module, ctx, expr, cond, prefix)]

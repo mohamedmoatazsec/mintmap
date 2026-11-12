@@ -15,6 +15,8 @@ written for these tests; no development-project code is copied.
     RequestAuthenticatorTests  candidate tier `request_authenticator`: project DRF authentication classes (settings
                                default or a view attribute) and `request.user = ...` in project code are reviewed and
                                fingerprinted; weakening one is a finding
+    RouterAliasTests           `api_urls = router.urls` in one module included as `mod.api_urls` from another is
+                               the router's routes (was an unattached unsupported_url_construct gap)
 """
 import json
 import unittest
@@ -394,6 +396,58 @@ class RequestAuthenticatorTests(unittest.TestCase):
                                        "            raise exceptions.AuthenticationFailed(\"inactive\")\n", ""))
         self.assertTrue(code & 4, findings)
         self.assertTrue([f for f in findings if f.get("group") == "candidates:request_authenticator"], findings)
+
+
+# ============================================================================ router aliases across modules
+ROUTER_VIEWS = """\
+import secrets
+
+from rest_framework import viewsets
+from rest_framework.decorators import action
+from rest_framework.response import Response
+
+
+class ServiceViewSet(viewsets.ViewSet):
+    def list(self, request):
+        return Response({})
+
+    @action(detail=False, methods=["post"])
+    def rotate(self, request):
+        request.user.profile.api_token = secrets.token_hex(32)
+        request.user.profile.save()
+        return Response({"api_token": request.user.profile.api_token})
+"""
+ROUTER_MOD = """\
+from rest_framework.routers import SimpleRouter
+
+from club import svc
+
+
+class TeamRouter(SimpleRouter):
+    pass
+
+
+admin_router = TeamRouter()
+admin_router.register("service", svc.ServiceViewSet, basename="service")
+admin_api_urls = admin_router.urls
+"""
+ROUTER_URLS = """\
+from django.urls import include, path
+
+import club.routing
+
+urlpatterns = [path("api/admin/", include(club.routing.admin_api_urls))]
+"""
+
+
+class RouterAliasTests(unittest.TestCase):
+    def test_router_urls_alias_in_another_module(self):
+        rep = scan(project(self, {"conf/urls.py": ROUTER_URLS, "club/routing.py": ROUTER_MOD,
+                                  "club/svc.py": ROUTER_VIEWS}, init=("conf", "club")))
+        self.assertIn("api/admin/service/", [r["pattern"] for r in rep["routes"]])
+        self.assertFalse([g for g in rep["coverage"]["gaps"] if g["type"] == "unsupported_url_construct"])
+        self.assertTrue([p for p in rep["paths"] if p["entry"]["id"] == "route:api/admin/service/|club.svc.ServiceViewSet"],
+                        [p["entry"]["id"] for p in rep["paths"]])
 
 
 if __name__ == "__main__":
