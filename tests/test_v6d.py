@@ -21,6 +21,19 @@ written for these tests; no development-project code is copied.
     UncataloguedAuthCallTests a function of a package the catalog does not cover whose name says it logs in or issues
                               a token, called with the request or a user, is an `auth_library_call` candidate
     PackageSettingsGroupTests DEBUG is an allauth setting only in a project that uses allauth, and only DEBUG itself
+    SignedReaderTests         the code that reads a signed value back decides in both directions: a reader (same
+                              salt, or same JWT key) that logs in or authenticates a request makes the value a mint
+                              whatever it is called; a value is set aside only when every reader is analysed (callers
+                              several levels up, callees several levels down, bare `loads` imports)
+    SessionPrincipalV6cTests  `request.user = obj.owner` attaches a looked-up object; a session id written after a
+                              PIN / secret check is a login whatever the model is called; SESSION_KEY constants
+    IntegrationTokenTests     an integration-named field that a project authenticator looks requests up by is a
+                              credential
+    WeakWordReaderTests       a weak word (`code`) on a user-linked model is a credential only when code that reads it
+                              back issues a session or credential (an e-mailed code, not a booking reference)
+    SessionVocabularyTests    principal nouns alone (`user_prefers_dark`) and UI words do not make a candidate;
+                              a session write after a password re-check does, whatever the key is called
+    CacheHandOffTests         a random nonce kept in a cache key that another view reads back to log the user in
 """
 import textwrap
 import unittest
@@ -222,10 +235,33 @@ class DynamicSettingsTests(unittest.TestCase):
                      "import sys\nsetattr(sys.modules[__name__], 'ACCOUNT_LOGIN_ON_PASSWORD_RESET', True)"):
             with self.subTest(line=line):
                 settings = ALLAUTH_SETTINGS + "from conf.env import load_overrides\n" + line + "\n"
-                rep = scan(self.base(settings=settings, extra={"conf/env.py": "def load_overrides():\n"
-                                                                              "    return {}\n"}))
+                env = "import os\n\n\ndef load_overrides():\n    return {k: v for k, v in os.environ.items()}\n"
+                rep = scan(self.base(settings=settings, extra={"conf/env.py": env}))
                 self.assertTrue(gaps(rep, "dynamic_setting"), line)
                 self.assertTrue(flow_paths(rep, RESET_LOGIN), line)
+
+    def test_namespace_update_with_known_keys(self):
+        # the dict a project function builds has constant keys: only those settings become unknown
+        env = textwrap.dedent("""\
+            import os
+
+
+            def directory_settings():
+                conf = {"AUTH_LDAP_SERVER_URI": os.environ.get("LDAP_URI", "")}
+                conf["AUTH_LDAP_BIND_DN"] = os.environ.get("LDAP_DN", "")
+                return conf
+
+
+            def reset_settings():
+                return {"ACCOUNT_LOGIN_ON_PASSWORD_RESET": os.environ.get("AUTO", "") == "1"}
+            """)
+        settings = ALLAUTH_SETTINGS + "from conf.env import directory_settings\nglobals().update(directory_settings())\n"
+        rep = scan(self.base(settings=settings, extra={"conf/env.py": env}))
+        self.assertFalse(gaps(rep, "dynamic_setting"))
+        self.assertTrue(disabled(rep, RESET_LOGIN))
+        settings = ALLAUTH_SETTINGS + "from conf.env import reset_settings\nglobals().update(reset_settings())\n"
+        rep = scan(self.base(settings=settings, extra={"conf/env.py": env}))
+        self.assertTrue(flow_paths(rep, RESET_LOGIN))
 
 
 # ============================================================================ test helpers named by strings
@@ -605,6 +641,554 @@ class PackageSettingsGroupTests(unittest.TestCase):
                        settings=ALLAUTH_SETTINGS + "DEBUG = False\nDEBUG_TOOLBAR_CONFIG = {}\n")
         grp = [g for g in scan(root)["settings_groups"] if g["id"] == "settings:package:allauth"]
         self.assertEqual(grp[0]["names"], ["DEBUG"])
+
+
+# ============================================================================ signed values and their readers
+LINK_CODEC = """\
+from django.core import signing
+
+LINK_SALT = "entry.link"
+
+
+def encode(person):
+    return signing.dumps({"p": person.pk}, salt=LINK_SALT)
+
+
+def decode(blob):
+    return signing.loads(blob, salt=LINK_SALT, max_age=600)
+"""
+LINK_SERVICE = """\
+from django.contrib.auth import get_user_model
+
+from shop.codec import decode
+
+
+def person_for(blob):
+    return get_user_model().objects.get(pk=decode(blob)["p"])
+"""
+LINK_VIEWS = """\
+from django.contrib.auth import get_user_model, login
+from django.core.mail import send_mail
+from django.http import HttpResponse
+
+from shop.codec import encode
+from shop.service import person_for
+
+
+def send(request):
+    p = get_user_model().objects.get(email=request.POST["email"])
+    send_mail("Enter", "/enter/?b=" + encode(p), None, [p.email])
+    return HttpResponse("sent")
+
+
+def enter(request):
+    login(request, person_for(request.GET["b"]), backend="django.contrib.auth.backends.ModelBackend")
+    return HttpResponse("in")
+"""
+LINK_URLS = """\
+from django.urls import path
+from shop import views
+urlpatterns = [path("send/", views.send), path("enter/", views.enter)]
+"""
+
+
+def signing_paths(report):
+    return [p for p in report["paths"] if p["mint"]["api"] == "django.core.signing.dumps"]
+
+
+class SignedReaderTests(unittest.TestCase):
+    def test_layered_reader_two_levels_below_the_login(self):
+        root = project(self, {"conf/urls.py": LINK_URLS, "shop/codec.py": LINK_CODEC, "shop/service.py": LINK_SERVICE,
+                              "shop/views.py": LINK_VIEWS})
+        ps = signing_paths(scan(root))
+        self.assertEqual([p["entry"]["id"] for p in ps], ["route:send/|shop.views.send"])
+        self.assertIn("read back", ps[0]["mint"]["purpose_basis"])
+
+        def mutate():
+            replace_in(root, "shop/views.py", "def enter(request):",
+                       "def peek(request):\n    return HttpResponse(encode(get_user_model().objects.get("
+                       "pk=request.GET['id'])))\n\n\ndef enter(request):")
+            replace_in(root, "conf/urls.py", 'path("enter/", views.enter)]',
+                       'path("enter/", views.enter), path("peek/", views.peek)]')
+        findings, code = run_diff(self, root, mutate)
+        self.assertTrue(code & 1, findings)
+
+    def test_unnamed_value_whose_reader_logs_in_is_a_mint(self):
+        views = textwrap.dedent("""\
+            from django.contrib.auth import get_user_model, login
+            from django.core import signing
+            from django.core.mail import send_mail
+            from django.http import HttpResponse
+
+
+            def send(request):
+                u = get_user_model().objects.get(email=request.POST["email"])
+                send_mail("Enter", "/enter/?s=" + signing.dumps({"n": u.pk}, salt="one-click"), None, [u.email])
+                return HttpResponse("sent")
+
+
+            def enter(request):
+                data = signing.loads(request.GET["s"], salt="one-click", max_age=300)
+                login(request, get_user_model().objects.get(pk=data["n"]),
+                      backend="django.contrib.auth.backends.ModelBackend")
+                return HttpResponse("in")
+            """)
+        root = project(self, {"conf/urls.py": LINK_URLS, "shop/views.py": views})
+        self.assertEqual(len(signing_paths(scan(root))), 1)
+
+    def test_bare_loads_import_is_a_reader(self):
+        views = LINK_VIEWS.replace("from shop.service import person_for\n", "from django.core.signing import loads\n")
+        views = views.replace("person_for(request.GET[\"b\"])",
+                              "get_user_model().objects.get(pk=loads(request.GET['b'], salt='entry.link')['p'])")
+        root = project(self, {"conf/urls.py": LINK_URLS, "shop/codec.py": LINK_CODEC, "shop/views.py": views})
+        self.assertEqual(len(signing_paths(scan(root))), 1)
+
+    def test_reader_far_below_keeps_the_mint(self):
+        # the login is five calls below the reader: the reader's reach is followed without a depth limit
+        chain = textwrap.dedent("""\
+            from django.contrib.auth import login
+
+
+            def a(request, data):
+                return b(request, data)
+
+
+            def b(request, data):
+                return c(request, data)
+
+
+            def c(request, data):
+                return d(request, data)
+
+
+            def d(request, data):
+                return e(request, data)
+
+
+            def e(request, data):
+                login(request, data, backend="django.contrib.auth.backends.ModelBackend")
+            """)
+        views = LINK_VIEWS.replace("from shop.service import person_for\n", "from shop.chain import a\n"
+                                   "from shop.codec import decode\n")
+        views = views.replace('    login(request, person_for(request.GET["b"]), '
+                              'backend="django.contrib.auth.backends.ModelBackend")\n',
+                              '    a(request, decode(request.GET["b"]))\n')
+        codec = LINK_CODEC.replace('{"p": person.pk}', '{"user": person.pk}')
+        root = project(self, {"conf/urls.py": LINK_URLS, "shop/codec.py": codec, "shop/chain.py": chain,
+                              "shop/views.py": views})
+        self.assertEqual(len(signing_paths(scan(root))), 1)
+
+    def test_principal_link_from_a_user_model_method(self):
+        models = textwrap.dedent("""\
+            from django.contrib.auth.models import AbstractUser
+            from django.core.signing import TimestampSigner
+
+
+            class Person(AbstractUser):
+                def entry(self):
+                    return "/enter/?t=" + TimestampSigner(salt="person.entry").sign(str(self.pk))
+            """)
+        views = textwrap.dedent("""\
+            from django.http import HttpResponse
+
+            from shop.models import Person
+
+
+            def send(request):
+                p = Person.objects.get(email=request.POST["email"])
+                return HttpResponse(p.entry())
+            """)
+        root = project(self, {"conf/urls.py": "from django.urls import path\nfrom shop import views\n"
+                                              "urlpatterns = [path('send/', views.send)]\n",
+                              "shop/models.py": models, "shop/views.py": views},
+                       settings_extra='AUTH_USER_MODEL = "shop.Person"\n')
+        ps = [p for p in scan(root)["paths"] if "sign" in p["mint"]["api"]]
+        self.assertEqual(len(ps), 1, [p["mint"]["api"] for p in scan(root)["paths"]])
+
+    def test_jwt_whose_decoder_authenticates_requests(self):
+        util = textwrap.dedent("""\
+            import jwt
+            from django.conf import settings
+
+
+            def pack(payload):
+                return jwt.encode(payload, settings.APP_JWT_KEY, algorithm="HS256")
+
+
+            def unpack(raw):
+                return jwt.decode(raw, settings.APP_JWT_KEY, algorithms=["HS256"])
+            """)
+        auth = textwrap.dedent("""\
+            from django.contrib.auth import get_user_model
+            from rest_framework.authentication import BaseAuthentication
+
+            from shop.util import unpack
+
+
+            class AppBearer(BaseAuthentication):
+                def authenticate(self, request):
+                    raw = request.headers.get("Authorization", "")[7:]
+                    return get_user_model().objects.get(pk=unpack(raw)["s"]), None
+            """)
+        views = textwrap.dedent("""\
+            import time
+
+            from django.contrib.auth import authenticate
+            from django.http import JsonResponse
+
+            from shop.util import pack
+
+
+            def obtain(request):
+                who = authenticate(request, username=request.POST["u"], password=request.POST["p"])
+                if who is None:
+                    return JsonResponse({}, status=401)
+                return JsonResponse({"access": pack({"s": who.pk, "exp": time.time() + 300})})
+            """)
+        root = project(self, {"conf/urls.py": "from django.urls import path\nfrom shop import views\n"
+                                              "urlpatterns = [path('obtain/', views.obtain)]\n",
+                              "shop/util.py": util, "shop/auth.py": auth, "shop/views.py": views},
+                       settings_extra='APP_JWT_KEY = "k"\nREST_FRAMEWORK = {"DEFAULT_AUTHENTICATION_CLASSES": '
+                                      '["shop.auth.AppBearer"]}\n')
+        ps = [p for p in scan(root)["paths"] if p["mint"]["api"] == "jwt.encode"]
+        self.assertEqual([p["entry"]["id"] for p in ps], ["route:obtain/|shop.views.obtain"])
+        findings, code = run_diff(self, root, lambda: replace_in(root, "shop/views.py", "time.time() + 300",
+                                                                 "time.time() + 300 * 10**6"))
+        self.assertTrue(code & 4, findings)
+
+
+# ============================================================================ session values that load a principal
+DEVICE_MODELS = """\
+from django.db import models
+
+
+class Terminal(models.Model):
+    owner = models.ForeignKey("auth.User", on_delete=models.CASCADE)
+    pairing_code = models.CharField(max_length=12)
+"""
+DEVICE_VIEWS = """\
+import hmac
+
+from django.http import HttpResponse, HttpResponseForbidden
+
+from shop.models import Terminal
+
+
+def pair(request):
+    t = Terminal.objects.get(pk=request.POST["t"])
+    if not hmac.compare_digest(t.pairing_code, request.POST["code"]):
+        return HttpResponseForbidden()
+    request.session["terminal"] = t.pk
+    return HttpResponse("paired")
+"""
+DEVICE_MW = """\
+from shop.models import Terminal
+
+
+class TerminalLogin:
+    def __init__(self, get_response):
+        self.get_response = get_response
+
+    def __call__(self, request):
+        if "terminal" in request.session:
+            t = Terminal.objects.get(pk=request.session["terminal"])
+            request.user = t.owner
+        return self.get_response(request)
+"""
+KIOSK = """\
+from django.http import HttpResponse, HttpResponseForbidden
+
+from shop.models import Worker
+
+
+def badge_in(request):
+    w = Worker.objects.filter(badge=request.POST.get("badge")).first()
+    if w is None or w.pin != request.POST.get("pin"):
+        return HttpResponseForbidden()
+    request.session["worker_ref"] = w.pk
+    return HttpResponse("ok")
+
+
+def shift(request):
+    w = Worker.objects.get(pk=request.session["worker_ref"])
+    return HttpResponse(str(w.pk))
+"""
+KIOSK_MODELS = """\
+from django.db import models
+
+
+class Worker(models.Model):
+    badge = models.CharField(max_length=20)
+    pin = models.CharField(max_length=6)
+"""
+
+
+def session_paths(report, key):
+    return [p for p in report["paths"] if p["mint"]["api"] == f"session[{key}]"]
+
+
+class SessionPrincipalV6cTests(unittest.TestCase):
+    def test_request_user_from_an_attribute_of_the_looked_up_object(self):
+        settings = textwrap.dedent("""\
+            SECRET_KEY = "fixture-only"
+            INSTALLED_APPS = ["django.contrib.auth", "django.contrib.sessions", "shop"]
+            MIDDLEWARE = ["django.contrib.sessions.middleware.SessionMiddleware",
+                          "django.contrib.auth.middleware.AuthenticationMiddleware", "shop.middleware.TerminalLogin"]
+            ROOT_URLCONF = "conf.urls"
+            """)
+        root = project(self, {"conf/urls.py": "from django.urls import path\nfrom shop.views import pair\n"
+                                              "urlpatterns = [path('pair/', pair)]\n",
+                              "shop/models.py": DEVICE_MODELS, "shop/views.py": DEVICE_VIEWS,
+                              "shop/middleware.py": DEVICE_MW}, settings=settings)
+        self.assertEqual(len(session_paths(scan(root), "terminal")), 1)
+        findings, code = run_diff(self, root, lambda: replace_in(
+            root, "shop/views.py", '    if not hmac.compare_digest(t.pairing_code, request.POST["code"]):\n'
+                                   '        return HttpResponseForbidden()\n', ""))
+        self.assertTrue(code, findings)
+
+    def test_session_id_written_after_a_pin_check_is_a_login(self):
+        root = project(self, {"conf/urls.py": "from django.urls import path\nfrom shop import views\n"
+                                              "urlpatterns = [path('in/', views.badge_in), path('shift/', "
+                                              "views.shift)]\n",
+                              "shop/models.py": KIOSK_MODELS, "shop/views.py": KIOSK})
+        rep = scan(root)
+        self.assertEqual(len(session_paths(rep, "worker_ref")), 1)
+        self.assertFalse(rep["coverage"]["custom_credentials"]["session_lookups_set_aside"])
+
+    def test_session_key_constant_of_django(self):
+        views = textwrap.dedent("""\
+            from django.contrib.auth import SESSION_KEY, get_user_model
+            from django.core.cache import cache
+            from django.http import HttpResponse
+
+
+            def handoff(request):
+                uid = cache.get("handoff:" + request.GET["n"])
+                request.session.cycle_key()
+                request.session[SESSION_KEY] = str(get_user_model().objects.get(pk=uid).pk)
+                return HttpResponse("in")
+            """)
+        root = project(self, {"conf/urls.py": "from django.urls import path\nfrom shop import views\n"
+                                              "urlpatterns = [path('h/', views.handoff)]\n",
+                              "shop/views.py": views})
+        self.assertEqual(len(session_paths(scan(root), "_auth_user_id")), 1)
+
+
+# ============================================================================ integration-named inbound credentials
+class IntegrationTokenTests(unittest.TestCase):
+    def test_integration_field_used_by_an_authenticator_is_a_credential(self):
+        models = textwrap.dedent("""\
+            from django.db import models
+
+
+            class Profile(models.Model):
+                user = models.OneToOneField("auth.User", on_delete=models.CASCADE)
+                integration_token = models.CharField(max_length=64, blank=True)
+            """)
+        views = textwrap.dedent("""\
+            import secrets
+
+            from django.http import JsonResponse
+
+
+            def rotate(request):
+                profile = request.user.profile
+                profile.integration_token = secrets.token_urlsafe(32)
+                profile.save()
+                return JsonResponse({"token": profile.integration_token})
+            """)
+        auth = textwrap.dedent("""\
+            from rest_framework.authentication import BaseAuthentication
+
+            from shop.models import Profile
+
+
+            class IntegrationAuth(BaseAuthentication):
+                def authenticate(self, request):
+                    raw = request.headers.get("X-Integration", "")
+                    profile = Profile.objects.filter(integration_token=raw).first()
+                    return (profile.user, None) if profile else None
+            """)
+        root = project(self, {"conf/urls.py": "from django.urls import path\nfrom shop import views\n"
+                                              "urlpatterns = [path('rotate/', views.rotate)]\n",
+                              "shop/models.py": models, "shop/views.py": views, "shop/auth.py": auth},
+                       settings_extra='REST_FRAMEWORK = {"DEFAULT_AUTHENTICATION_CLASSES": '
+                                      '["shop.auth.IntegrationAuth"]}\n')
+        ps = [p for p in scan(root)["paths"] if p["entry"]["id"].startswith("route:rotate/")]
+        self.assertEqual(len(ps), 1)
+
+    def test_outbound_webhook_secret_is_still_set_aside(self):
+        models = "from django.db import models\n\n\nclass Hook(models.Model):\n    url = models.URLField()\n" \
+                 "    owner = models.ForeignKey('auth.User', on_delete=models.CASCADE)\n" \
+                 "    webhook_token = models.CharField(max_length=64)\n"
+        views = textwrap.dedent("""\
+            import secrets
+
+            from django.http import JsonResponse
+
+            from shop.models import Hook
+
+
+            def add_hook(request):
+                h = Hook.objects.create(owner=request.user, url=request.POST["url"],
+                                        webhook_token=secrets.token_hex(16))
+                return JsonResponse({"secret": h.webhook_token})
+            """)
+        root = project(self, {"conf/urls.py": "from django.urls import path\nfrom shop import views\n"
+                                              "urlpatterns = [path('hook/', views.add_hook)]\n",
+                              "shop/models.py": models, "shop/views.py": views})
+        self.assertFalse([p for p in scan(root)["paths"] if p["entry"]["id"].startswith("route:hook/")])
+
+
+# ============================================================================ weak words need a credential reader
+WEAK_MODELS = """\
+from django.db import models
+
+
+class Reservation(models.Model):
+    guest = models.ForeignKey("auth.User", on_delete=models.CASCADE)
+    code = models.CharField(max_length=8)
+
+
+class MailCode(models.Model):
+    person = models.ForeignKey("auth.User", on_delete=models.CASCADE)
+    code = models.CharField(max_length=6)
+"""
+WEAK_VIEWS = """\
+import secrets
+
+from django.contrib.auth import get_user_model, login
+from django.core.mail import send_mail
+from django.http import HttpResponse, JsonResponse
+from django.utils.crypto import get_random_string
+
+from shop.models import MailCode, Reservation
+
+
+def reserve(request):
+    r = Reservation.objects.create(guest=request.user, code=get_random_string(8))
+    return JsonResponse({"ref": r.code})
+
+
+def send_code(request):
+    u = get_user_model().objects.get(email=request.POST["email"])
+    MailCode.objects.create(person=u, code=f"{secrets.randbelow(10**6):06d}")
+    send_mail("Code", "see app", None, [u.email])
+    return HttpResponse("sent")
+
+
+def check_code(request):
+    hit = MailCode.objects.filter(person__email=request.POST["email"], code=request.POST["code"]).first()
+    if hit is None:
+        return HttpResponse(status=403)
+    login(request, hit.person, backend="django.contrib.auth.backends.ModelBackend")
+    return HttpResponse("in")
+"""
+WEAK_URLS = """\
+from django.urls import path
+from shop import views
+urlpatterns = [path("reserve/", views.reserve), path("code/", views.send_code), path("check/", views.check_code)]
+"""
+
+
+class WeakWordReaderTests(unittest.TestCase):
+    def test_reference_nobody_checks_is_not_a_credential_but_an_emailed_code_is(self):
+        rep = scan(project(self, {"conf/urls.py": WEAK_URLS, "shop/models.py": WEAK_MODELS,
+                                  "shop/views.py": WEAK_VIEWS}))
+        routes = sorted(p["entry"]["id"] for p in rep["paths"] if p["mint"]["kind"] == "heuristic_custom_credential")
+        self.assertEqual(routes, ["route:code/|shop.views.send_code"])
+        aside = [r for r in rep["coverage"]["custom_credentials"]["set_aside"] if r["function"] == "shop.views.reserve"]
+        self.assertTrue(aside and "looks it up" in aside[0]["reasons"][0], aside)
+
+
+# ============================================================================ session vocabulary
+class SessionVocabularyTests(unittest.TestCase):
+    def test_ui_keys_with_principal_nouns_are_not_candidates(self):
+        views = ["from django.http import HttpResponse", "", ""]
+        keys = [("user_prefers_dark", "True"), ("account_tab_open", "True"), ("member_sidebar_collapsed", "True"),
+                ("login_tip_dismissed", "True"), ("user_selected_team", "request.team.pk"),
+                ("auth_help_opened", "True")]
+        for i, (k, v) in enumerate(keys):
+            views += [f"def ui_{i}(request):", f"    request.session[{k!r}] = {v}", "    return HttpResponse('ok')",
+                      "", ""]
+        urls = "from django.urls import path\nfrom shop import views\nurlpatterns = [" + ", ".join(
+            f"path('ui/{i}/', views.ui_{i})" for i in range(len(keys))) + "]\n"
+        rep = scan(project(self, {"conf/urls.py": urls, "shop/views.py": "\n".join(views)}))
+        self.assertFalse(cands(rep, "session_state"), [c["candidate"]["keys"] for c in cands(rep)])
+
+    def test_principal_id_and_state_words_still_are(self):
+        views = textwrap.dedent("""\
+            import time
+
+            from django.http import HttpResponse
+
+
+            def a(request):
+                request.session["member_id"] = request.member.pk
+                return HttpResponse("ok")
+
+
+            def b(request):
+                request.session["mfa_verified"] = True
+                return HttpResponse("ok")
+            """)
+        urls = "from django.urls import path\nfrom shop import views\nurlpatterns = [path('a/', views.a), " \
+               "path('b/', views.b)]\n"
+        rep = scan(project(self, {"conf/urls.py": urls, "shop/views.py": views}))
+        self.assertEqual(len(cands(rep, "session_state")), 2)
+
+    def test_write_after_a_password_recheck_whatever_the_key(self):
+        views = textwrap.dedent("""\
+            import time
+
+            from django.http import HttpResponse, HttpResponseForbidden
+
+
+            def confirm(request):
+                if not request.user.check_password(request.POST.get("password", "")):
+                    return HttpResponseForbidden()
+                request.session["recheck_last_seen"] = time.time()
+                return HttpResponse("ok")
+            """)
+        urls = "from django.urls import path\nfrom shop import views\nurlpatterns = [path('c/', views.confirm)]\n"
+        rep = scan(project(self, {"conf/urls.py": urls, "shop/views.py": views}))
+        hit = cands(rep, "session_state")
+        self.assertEqual(len(hit), 1)
+        self.assertIn("after_secret_check", hit[0]["candidate"]["signals"])
+
+
+# ============================================================================ cache hand-off
+class CacheHandOffTests(unittest.TestCase):
+    def test_nonce_in_a_cache_key_read_back_by_a_login(self):
+        views = textwrap.dedent("""\
+            import secrets
+
+            from django.contrib.auth import get_user_model, login
+            from django.core.cache import cache
+            from django.http import HttpResponse, HttpResponseForbidden
+            from django.shortcuts import redirect
+
+
+            def leave(request):
+                n = secrets.token_urlsafe(24)
+                cache.set(f"jump:{n}", request.user.pk, timeout=30)
+                return redirect(f"https://other.example.com/arrive/?n={n}")
+
+
+            def arrive(request):
+                uid = cache.get(f"jump:{request.GET.get('n', '')}")
+                if uid is None:
+                    return HttpResponseForbidden()
+                login(request, get_user_model().objects.get(pk=uid),
+                      backend="django.contrib.auth.backends.ModelBackend")
+                return HttpResponse("in")
+            """)
+        urls = "from django.urls import path\nfrom shop import views\nurlpatterns = [path('leave/', views.leave), " \
+               "path('arrive/', views.arrive)]\n"
+        root = project(self, {"conf/urls.py": urls, "shop/views.py": views})
+        ps = [p for p in scan(root)["paths"] if p["entry"]["id"].startswith("route:leave/")]
+        self.assertEqual(len(ps), 1)
+        self.assertIn("read back from the cache", ps[0]["mint"]["purpose_note"])
 
 
 if __name__ == "__main__":

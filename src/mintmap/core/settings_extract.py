@@ -150,7 +150,7 @@ _NAMESPACE_WRITERS = ("update", "setdefault", "__setitem__", "pop", "clear")
 
 
 def _namespace_writes(tree) -> list:
-    """(v6c) [(line, text)] for statements that write a module's namespace dynamically: `globals().update(...)`,
+    """(v6c) [(line, text, update argument or None)] for statements that write a module's namespace dynamically: `globals().update(...)`,
     `globals()[k] = v` (anywhere in the module: globals() is the module namespace inside functions too),
     `vars()` / `locals()` writes at module level, and setattr / item stores / `__dict__` updates on
     `sys.modules[...]`."""
@@ -176,14 +176,15 @@ def _namespace_writes(tree) -> list:
                 tgts = n.targets if isinstance(n, ast.Assign) else [n.target]
                 for t in tgts:
                     if isinstance(t, ast.Subscript) and namespace(t.value, at_top):
-                        out.append((n.lineno, _unparse(n)[:120]))
+                        out.append((n.lineno, _unparse(n)[:120], None))
             elif isinstance(n, ast.Call):
                 f = n.func
                 if isinstance(f, ast.Attribute) and f.attr in _NAMESPACE_WRITERS and namespace(f.value, at_top):
-                    out.append((n.lineno, _unparse(n)[:120]))
+                    arg = n.args[0] if f.attr == "update" and len(n.args) == 1 and not n.keywords else None
+                    out.append((n.lineno, _unparse(n)[:120], arg))
                 elif isinstance(f, ast.Name) and f.id in ("setattr", "delattr") and n.args and \
                         _mentions_sys_modules(n.args[0]):
-                    out.append((n.lineno, _unparse(n)[:120]))
+                    out.append((n.lineno, _unparse(n)[:120], None))
 
     for st in ast.walk(tree):
         if isinstance(st, ast.stmt) and not isinstance(st, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef,
@@ -191,8 +192,8 @@ def _namespace_writes(tree) -> list:
             visit(st, id(st) in top)
     seen, uniq = set(), []
     for x in out:
-        if x not in seen:
-            seen.add(x)
+        if x[:2] not in seen:
+            seen.add(x[:2])
             uniq.append(x)
     return uniq
 
@@ -467,13 +468,24 @@ class _Evaluator:
         mod = self.p.modules.get(modname)
         if mod is None or modname in _stack:
             return env
-        for line, text in _namespace_writes(mod.tree):
+        known_writes = []
+        for line, text, arg in _namespace_writes(mod.tree):
             # (v6c) the module's namespace written through globals() / vars() / locals() / sys.modules: any setting
-            # may be assigned (`globals().update(load_env())`, `for k, v in ...: globals()[k] = v`)
+            # may be assigned (`globals().update(load_env())`, `for k, v in ...: globals()[k] = v`), unless the
+            # update's keys are known (a dict literal, or the dict a project function builds and returns)
+            keys = self._dict_keys(arg, mod.name) if arg is not None else None
+            if keys is not None:
+                known_writes.append((line, text, keys))
+                continue
             self.gaps.append(Gap("dynamic_setting", mod.path, "<settings>",
                                  f"{text}: writes the settings module's namespace at run time; it may assign any "
                                  f"setting", line))
         self.run_block(mod, mod.tree.body, env, _stack + (modname,))
+        for line, text, keys in known_writes:
+            for k in sorted(keys):
+                if k.isupper():
+                    d = Dynamic(f"{text} (line {line})")
+                    env[k] = merge_alternative_values(env[k], d) if k in env else d
         # (v5, R4) a module-level function that changes auth settings but that MintMap did not see being called
         # at module level (called through a variable, from another module, from a loop over functions ...)
         for fname, fdef in sorted(self.fdefs.get(modname, {}).items()):
@@ -482,6 +494,93 @@ class _Evaluator:
                 self.gaps.append(Gap("settings_function_not_evaluated", mod.path, fname,
                                      "changes " + ", ".join(sorted(touched)) + "; no module-level call found"))
         return env
+
+    def _dict_keys(self, e, modname, depth=0):
+        """(v6c) The constant string keys of a dict expression: a literal (with `**` of such dicts), or a call
+        to a project function whose returns are names assigned only dict literals / constant-key item stores /
+        updates with such dicts.  None when any key is not a constant."""
+        if depth > 3:
+            return None
+        if isinstance(e, ast.Dict):
+            out = set()
+            for k, v in zip(e.keys, e.values):
+                if k is None:
+                    sub = self._dict_keys(v, modname, depth + 1)
+                    if sub is None:
+                        return None
+                    out |= sub
+                elif isinstance(k, ast.Constant) and isinstance(k.value, str):
+                    out.add(k.value)
+                else:
+                    return None
+            return out
+        if isinstance(e, ast.Name):
+            # a module-level name: every value assigned to it (`conf = get_conf(); globals().update(conf)`)
+            mod = self.p.modules.get(modname)
+            vals = (mod.assigns.get(e.id) if mod is not None else None) or []
+            if not vals:
+                return None
+            out = set()
+            for v in vals:
+                sub = self._dict_keys(v, modname, depth + 1)
+                if sub is None:
+                    return None
+                out |= sub
+            return out
+        if isinstance(e, ast.Call) and isinstance(e.func, (ast.Name, ast.Attribute)):
+            q = self.p.resolve_expr_static(modname, e.func)
+            q = self.p.canonical(q) if q else None
+            info = self.p.functions.get(q or "")
+            if info is None or info.cls:
+                return None
+            out = set()
+            rets = [n for n in self.p.walk_function_body(info.node) if isinstance(n, ast.Return)]
+            if not rets:
+                return None
+            for r in rets:
+                v = r.value
+                if isinstance(v, ast.Dict):
+                    sub = self._dict_keys(v, info.module, depth + 1)
+                elif isinstance(v, ast.Name):
+                    sub = self._local_dict_keys(info, v.id, depth)
+                else:
+                    sub = None
+                if sub is None:
+                    return None
+                out |= sub
+            return out
+        return None
+
+    def _local_dict_keys(self, info, name, depth):
+        out = set()
+        for n in self.p.walk_function_body(info.node):
+            if isinstance(n, (ast.Assign, ast.AnnAssign)):
+                tgts = n.targets if isinstance(n, ast.Assign) else [n.target]
+                for t in tgts:
+                    if isinstance(t, ast.Name) and t.id == name:
+                        sub = self._dict_keys(n.value, info.module, depth + 1) if n.value is not None else None
+                        if sub is None:
+                            return None
+                        out |= sub
+                    elif isinstance(t, ast.Subscript) and isinstance(t.value, ast.Name) and t.value.id == name:
+                        if not (isinstance(t.slice, ast.Constant) and isinstance(t.slice.value, str)):
+                            return None
+                        out.add(t.slice.value)
+            elif isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute) and \
+                    isinstance(n.func.value, ast.Name) and n.func.value.id == name and \
+                    n.func.attr in ("update", "setdefault", "__setitem__"):
+                if n.func.attr == "update":
+                    sub = self._dict_keys(n.args[0], info.module, depth + 1) if n.args else set()
+                    if sub is None or n.keywords:
+                        return None
+                    out |= sub
+                elif n.args and isinstance(n.args[0], ast.Constant) and isinstance(n.args[0].value, str):
+                    out.add(n.args[0].value)
+                else:
+                    return None
+            elif isinstance(n, ast.AugAssign) and isinstance(n.target, ast.Name) and n.target.id == name:
+                return None
+        return out
 
     def run_block(self, mod, body, env, stack):
         for st in body:

@@ -97,6 +97,11 @@ PURPOSE_FAMILIES = [
 ]
 GENERIC_PURPOSE = "custom_token_candidate"
 HEURISTIC_KIND = "heuristic_custom_credential"
+# (v6c) Django's session key constants (django/contrib/auth/__init__.py:16-18, Django 6.1.2): a hand-rolled login
+# that writes `session[SESSION_KEY]` writes "_auth_user_id"
+DJANGO_SESSION_KEYS = {"django.contrib.auth.SESSION_KEY": "_auth_user_id",
+                       "django.contrib.auth.BACKEND_SESSION_KEY": "_auth_user_backend",
+                       "django.contrib.auth.HASH_SESSION_KEY": "_auth_user_hash"}
 _SPLIT = re.compile(r"[^A-Za-z0-9]+|(?<=[a-z0-9])(?=[A-Z])")
 
 
@@ -661,6 +666,9 @@ class CredentialHeuristics:
                 labs = set().union(*(lab(a, local) for a in tainted))
                 # a key computed per subject (user id, e-mail) ties the value to a principal
                 per_subject = not isinstance(k0, ast.Constant)
+                pats = {k for k in self.key_patterns(k0, info) if self.pattern_usable(k)}
+                if pats:
+                    self.__dict__.setdefault("_cache_sink_patterns", {})[(qn, n.lineno)] = pats
                 t.sinks.append(Sink("cache", qn, n.lineno, names, _ctx_names(n, holders), frozenset(labs),
                                     f"{_u(n.func)}(...)", principal=per_subject))
             return
@@ -825,6 +833,9 @@ class CredentialHeuristics:
             c = self.module_str_constant(info.module, e, info)
             if c is not None:
                 return {c}
+            q = self._resolve_static(info.module, e, info)
+            if q in DJANGO_SESSION_KEYS:
+                return {DJANGO_SESSION_KEYS[q]}     # (v6c) `request.session[SESSION_KEY] = ...`
         return {"?"}
 
     def module_str_constant(self, module, e, info=None, _depth=0):
@@ -912,7 +923,7 @@ class CredentialHeuristics:
                     if not ks:
                         continue
                     m = self._lookup_model(n.func, info) or self._shortcut_model(n, info)
-                    why = self._not_a_principal_lookup(k.arg, m, n, info)
+                    why = self._not_a_principal_lookup(k.arg, m, n, info, keys=ks)
                     if why:
                         # (v6b) the session holds the id of an event, a payment, a workspace ...: flow state
                         for key in ks:
@@ -947,20 +958,29 @@ class CredentialHeuristics:
                 return True
         return False
 
-    def _not_a_principal_lookup(self, kwarg, model, call, info) -> str:
+    def _not_a_principal_lookup(self, kwarg, model, call, info, keys=()) -> str:
         """(v6b) Why a lookup by a value read from the session does NOT load a principal ('' when it may): the
         looked-up model is a project model that is not principal-like (an event, a payment, a workspace), the
-        lookup keyword names no principal (`event_id=`), and the object is not attached to the request
-        (`request.customer = ...`)."""
+        lookup keyword names no principal (`event_id=`), the object is not attached to the request
+        (`request.customer = ...`, (v6c) also `request.user = obj.owner` or anything else derived from it), and
+        (v6c) no function that writes the key verifies a secret first (`emp.pin != request.POST["pin"]`,
+        check_password(), compare_digest()): a value written after a credential check is a login, whatever the
+        model is called."""
         if kwarg not in ("pk", "id") and words(kwarg) & self.PRINCIPAL_MODEL_NOUNS:
             return ""
         if model is None or not self.is_model(model) or self.principal_like(model):
             return ""
         if self._attached_to_request(call, info):
             return ""
+        for key in keys:
+            for w in self.session_key_writers().get(key, ()):
+                if self.verifies_secret(w):
+                    return ""
         return f"looks up {model.rsplit('.', 1)[-1]} (not a user / customer / account model) by `{kwarg}=`"
 
     def _attached_to_request(self, call, info) -> bool:
+        """The looked-up object, or anything derived from it (`obj.owner`, `obj.get_user()`, `obj["user"]`), is
+        assigned to an attribute of the request (`request.device = obj`, `request.user = obj.owner`)."""
         parents = self._parents(info)
         node, stmt = call, None
         while node is not None:
@@ -977,11 +997,60 @@ class CredentialHeuristics:
         if any(on_request(t) for t in targets):
             return True
         if names:
+            # names derived from the object (one level of `x = obj.attr`), then any request attribute assignment
+            # whose value mentions one of them
             for n in self.p.walk_function_body(info.node):
-                if isinstance(n, ast.Assign) and isinstance(n.value, ast.Name) and n.value.id in names and \
-                        any(on_request(t) for t in n.targets):
+                if isinstance(n, ast.Assign) and any(isinstance(x, ast.Name) and x.id in names
+                                                     for x in ast.walk(n.value)):
+                    names |= {t.id for t in n.targets if isinstance(t, ast.Name)}
+            for n in self.p.walk_function_body(info.node):
+                if isinstance(n, ast.Assign) and any(on_request(t) for t in n.targets) and \
+                        any(isinstance(x, ast.Name) and x.id in names for x in ast.walk(n.value)):
                     return True
         return False
+
+    def session_key_writers(self) -> dict:
+        """(v6c) {session key pattern: [functions that write it]} (cached)."""
+        hit = self.__dict__.get("_key_writers")
+        if hit is None:
+            hit = {}
+            for qn, info in self.p.functions.items():
+                for _st, kexpr, _v in self.session_writes(info):
+                    for k in self.key_patterns(kexpr, info):
+                        if self.pattern_usable(k) and qn not in hit.setdefault(k, []):
+                            hit[k].append(qn)
+            self._key_writers = hit
+        return hit
+
+    SECRET_CHECK_LEAVES = {"check_password", "acheck_password", "authenticate", "aauthenticate", "compare_digest",
+                           "constant_time_compare", "verify", "verify_token", "check_token", "verify_password",
+                           "checkpw", "check_password_hash"}
+    SECRET_ATTR_WORDS = {"pin", "password", "passcode", "code", "token", "secret", "otp", "key", "passphrase"}
+
+    def verifies_secret(self, fq) -> bool:
+        """(v6c) The function verifies a secret: a catalogued-style check call (check_password(), authenticate(),
+        compare_digest(), a verify / check_token method) or a comparison of a credential-named attribute with a
+        request value (`emp.pin != request.POST.get("pin")`, `obj.code == form.cleaned_data["code"]`)."""
+        memo = self.__dict__.setdefault("_verifies", {})
+        if fq in memo:
+            return memo[fq]
+        info = self.p.functions.get(fq)
+        hit = False
+        for n in self.p.walk_function_body(info.node) if info else ():
+            if isinstance(n, ast.Call) and _leaf(n.func) in self.SECRET_CHECK_LEAVES:
+                hit = True
+                break
+            if isinstance(n, ast.Compare) and any(isinstance(o, (ast.Eq, ast.NotEq)) for o in n.ops):
+                sides = [n.left] + list(n.comparators)
+                secret = any(isinstance(x, ast.Attribute) and words(x.attr) & self.SECRET_ATTR_WORDS for x in sides)
+                inbound = any(isinstance(y, ast.Attribute) and y.attr in ("POST", "GET", "data", "headers",
+                                                                          "cleaned_data", "query_params", "META")
+                              for x in sides for y in ast.walk(x))
+                if secret and inbound:
+                    hit = True
+                    break
+        memo[fq] = hit
+        return hit
 
     SHORTCUTS = {"get_object_or_404", "get_list_or_404", "aget_object_or_404", "aget_list_or_404"}
 
@@ -1060,13 +1129,18 @@ class CredentialHeuristics:
         """(v6) A generic signing / JWT primitive (`signing.dumps`, `Signer.sign`, `jwt.encode` ...) is a credential
         mint only when its value is kept where a credential is (a name with a STRONG credential word: returned
         from `make_token`, stored as `login_token`, passed as `token=`), or when it signs an identifier of a
-        principal (`{"user": user.pk}`, `request.user.email`): an identity assertion.  Signed URLs, form state,
-        CSRF-like challenges, outbound assertions and signed ids of other objects are set aside (listed in
-        coverage.custom_credentials.set_aside).  -> (purpose, why) | (None, reason)"""
+        principal (`{"user": user.pk}`, `request.user.email`, `self.pk` in a method of a principal-like model): an
+        identity assertion.  (v6c) The code that reads the value back decides in both directions: a value that a
+        reader with the same salt (or, for JWT, the same key) uses to log someone in or to authenticate a request
+        is a mint whatever its naming; a value that looked like a credential is set aside only when every such
+        reader is fully analysed (callers up to READER_UP levels) and none of them, at any depth,
+        issues a session or credential.  Set-aside values are listed in coverage.custom_credentials.set_aside and
+        watched (see analysis.watched_sites).  -> (purpose, why) | (None, reason)"""
         memo = self.__dict__.setdefault("_signed_memo", {})
         key = id(site.node)
         if key in memo:
             return memo[key]
+        memo[key] = (None, "being decided")       # recursion guard
         info = self.p.functions[site.func]
         call = site.node
         names = self._kept_names(info, call)
@@ -1077,25 +1151,35 @@ class CredentialHeuristics:
             ident = self._principal_payload(call, info)
             if ident:
                 out = (GENERIC_PURPOSE, f"signs a principal identifier ({ident})")
-        if out is not None:
-            # (v6b) the code that reads the value back (same salt) decides what it is: a value whose every reader
-            # neither logs anyone in nor issues a credential (nor do their callers) is integrity-protected state
-            # (a confirmation payload, an OAuth-like state, a redirect proof), not a credential
-            readers = self.signed_readers(call, info)
-            if readers and not any(self._issues_credential(r) for r in readers):
-                out = None
-                reason = (f"read back (same salt) only by {', '.join(readers[:3])}, which neither log anyone in nor "
-                          f"issue a credential (nor do their callers)")
+        readers = self.signed_readers(call, info)
+        issuing, unknown = [], []
+        for r in readers:
+            issues, complete, reaches = self.reader_issues(r)
+            if issues:
+                issuing.append(r)
+            elif reaches or not complete:
+                unknown.append(r)
+        what = "key" if self._is_jwt(call, info) else "salt"
+        if out is None and issuing:
+            out = (GENERIC_PURPOSE, f"read back (same {what}) by {', '.join(issuing[:3])}, which logs someone in "
+                                    f"or authenticates a request with it")
+        elif out is not None and readers and not issuing and not unknown:
+            # (v6b) every reader is analysed and none of them issues anything: integrity-protected state (a
+            # confirmation payload, an OAuth-like state, a redirect proof), not a credential
+            out = None
+            reason = (f"read back (same {what}) only by {', '.join(readers[:3])}, which neither log anyone in nor "
+                      f"issue a credential (nor do their callers, up to {self.READER_UP} levels)")
         if out is None:
             out = (None, f"{reason}; the signed payload names no principal identifier" if "read back" not in reason
                    else reason)
             self.rejected.append(dict(function=info.qualname, line=site.line, source=site.text,
-                                      reasons=[f"generic signing primitive: {out[1]}"]))
+                                      reasons=[f"generic signing primitive: {out[1]}"], watch="signed_value"))
         memo[key] = out
         return out
 
     READ_BACK_LEAVES = {"loads", "unsign", "unsign_object", "aunsign"}
     ISSUING_LEAVES = {"login", "alogin", "set_password", "aset_password", "update_session_auth_hash"}
+    READER_UP, READER_DOWN = 4, 4
 
     def _salt_signature(self, e, info):
         """(v6b) A comparable form of a `salt=` expression: a string constant (also a module constant), or the
@@ -1113,13 +1197,31 @@ class CredentialHeuristics:
                 return "f:" + "|".join(parts)
         return None
 
+    def _is_jwt(self, call, info) -> bool:
+        q = self._resolve_static(info.module, call.func, info) if isinstance(call.func, (ast.Name, ast.Attribute)) \
+            else None
+        return bool(q) and q.split(".")[0] == "jwt" and q.rsplit(".", 1)[-1] in ("encode", "decode")
+
+    def _value_key_signature(self, call, info):
+        """(v6c) The salt of a signing call (`salt=` of the call or of the Signer it is called on), or the key
+        of a PyJWT encode / decode call (second argument or `key=`), in comparable form."""
+        if self._is_jwt(call, info):
+            k = next((x.value for x in call.keywords if x.arg == "key"), None)
+            if k is None and len(call.args) >= 2:
+                k = call.args[1]
+            sig = self._salt_signature(k, info) if k is not None else None
+            return "jwt:" + sig if sig else None
+        k = next((x.value for x in call.keywords if x.arg == "salt"), None)
+        if k is None and isinstance(call.func, ast.Attribute) and isinstance(call.func.value, ast.Call):
+            k = next((x.value for x in call.func.value.keywords if x.arg == "salt"), None)
+        return self._salt_signature(k, info) if k is not None else None
+
     def signed_readers(self, call, info) -> list:
         """(v6b) Project functions that read a signed value back with the same salt (`signing.loads(v, salt=S)`,
-        `Signer(salt=S).unsign(v)`); [] when the salt is not comparable or nothing reads it back."""
-        salt = next((k.value for k in call.keywords if k.arg == "salt"), None)
-        if salt is None and isinstance(call.func, ast.Attribute) and isinstance(call.func.value, ast.Call):
-            salt = next((k.value for k in call.func.value.keywords if k.arg == "salt"), None)
-        sig = self._salt_signature(salt, info) if salt is not None else None
+        `Signer(salt=S).unsign(v)`, (v6c) also a bare `loads(v, salt=S)` imported from django.core.signing, and
+        `jwt.decode(v, KEY, ...)` for a `jwt.encode(p, KEY, ...)`); [] when the salt / key is not comparable or
+        nothing reads it back."""
+        sig = self._value_key_signature(call, info)
         if sig is None:
             return []
         index = self.__dict__.get("_reader_index")
@@ -1127,13 +1229,19 @@ class CredentialHeuristics:
             index = {}
             for fq, finfo in self.p.functions.items():
                 for n in self.p.walk_function_body(finfo.node):
-                    if not (isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute)
-                            and n.func.attr in self.READ_BACK_LEAVES):
+                    if not isinstance(n, ast.Call):
                         continue
-                    k = next((x.value for x in n.keywords if x.arg == "salt"), None)
-                    if k is None and isinstance(n.func.value, ast.Call):
-                        k = next((x.value for x in n.func.value.keywords if x.arg == "salt"), None)
-                    ks = self._salt_signature(k, finfo) if k is not None else None
+                    leaf = _leaf(n.func)
+                    if leaf in self.READ_BACK_LEAVES:
+                        if isinstance(n.func, ast.Name):
+                            q = self._resolve_static(finfo.module, n.func, finfo) or ""
+                            if not q.startswith("django.core.signing."):
+                                continue
+                        elif not isinstance(n.func, ast.Attribute):
+                            continue
+                    elif not (leaf == "decode" and self._is_jwt(n, finfo)):
+                        continue
+                    ks = self._value_key_signature(n, finfo)
                     if ks and fq not in index.setdefault(ks, []):
                         index[ks].append(fq)
             self._reader_index = index
@@ -1150,17 +1258,61 @@ class CredentialHeuristics:
             self._callers_map = hit
         return hit
 
-    def _issues_credential(self, fq) -> bool:
-        """(v6b) `fq`, a function that calls it, or what either calls (two levels down) logs someone in, sets a
-        password or calls a catalogued (non-generic) mint API."""
-        funcs = {fq} | self._callers().get(fq, set())
-        return any(self._issues_below(f, 2, set()) for f in funcs)
+    def reader_issues(self, fq) -> tuple:
+        """(v6c) (issues, complete, reaches) for a function that reads a value back.  `issues`: it, or a function
+        that calls it (up to READER_UP levels: codec -> service -> view), reaches within READER_DOWN calls code
+        that logs someone in, sets a password, calls a catalogued mint, writes a hand-rolled session login or
+        authenticates the request (`request.user = ...`, `scope["user"] = ...`, the `authenticate()` of an
+        authentication class).  `reaches`: the same at any depth.  `complete` is False when callers remain beyond
+        READER_UP levels.  Promoting a value to a mint needs `issues`; setting a credential-looking value aside
+        needs `complete` and not `reaches`."""
+        memo = self.__dict__.setdefault("_reader_memo", {})
+        if fq in memo:
+            return memo[fq]
+        callers = self._callers()
+        seen, level = {fq}, {fq}
+        for _ in range(self.READER_UP):
+            nxt = set()
+            for f in level:
+                nxt |= callers.get(f, set()) - seen
+            seen |= nxt
+            level = nxt
+            if not level:
+                break
+        complete = not any(callers.get(f, set()) - seen for f in level)
+        dist = self.issuing_distance()
+        best = min((dist[f] for f in seen if f in dist), default=None)
+        memo[fq] = (best is not None and best <= self.READER_DOWN, complete, best is not None)
+        return memo[fq]
 
-    def _issues_below(self, fq, depth, seen) -> bool:
-        if fq in seen or fq not in self.p.functions:
-            return False
-        seen.add(fq)
+    def issuing_distance(self) -> dict:
+        """(v6c) {project function: number of resolved project calls to the nearest code that issues (see
+        reader_issues)} for every function that reaches such code (0 = issues itself; computed once over the
+        whole call graph)."""
+        hit = self.__dict__.get("_issuing_dist")
+        if hit is not None:
+            return hit
+        self._issuing_dist = {}          # recursion guard
+        dist = {fq: 0 for fq in self.p.functions if self._issues_directly(fq)}
+        callers = self._callers()
+        level = list(dist)
+        d = 0
+        while level:
+            d += 1
+            nxt = []
+            for n in level:
+                for c in callers.get(n, ()):
+                    if c not in dist:
+                        dist[c] = d
+                        nxt.append(c)
+            level = nxt
+        self._issuing_dist = dist
+        return dist
+
+    def _issues_directly(self, fq) -> bool:
         finfo = self.p.functions[fq]
+        if self._authenticates_request(fq) or self.session_login_stores(fq):
+            return True       # authenticates the request, or a hand-rolled session login (`session[SESSION_KEY]`)
         for site in self.a.cg.sites(fq):
             if site.leaf in self.ISSUING_LEAVES:
                 return True
@@ -1169,11 +1321,147 @@ class CredentialHeuristics:
                 api = self.a.catalog.mint_calls.get(c)
                 if api is not None and not (api.heuristic and api.ref is None):
                     return True
-            if depth > 0:
-                for t, _ in res.targets:
-                    if self._issues_below(t, depth - 1, seen):
+        return False
+
+    def _issues_credential(self, fq) -> bool:
+        return self.reader_issues(fq)[0]
+
+    def _authenticates_request(self, fq) -> bool:
+        """(v6c) `request.user = <not None>` / `scope["user"] = ...` in the function, or the `authenticate` /
+        `authenticate_credentials` method of a class with a library base returning a value."""
+        info = self.p.functions.get(fq)
+        if info is None:
+            return False
+        leaf = fq.rsplit(".", 1)[-1]
+        if info.cls and leaf in ("authenticate", "authenticate_credentials") and \
+                any(c not in self.p.classes for c in self.p.mro(info.cls)[1:]):
+            return any(isinstance(n, ast.Return) and n.value is not None and
+                       not (isinstance(n.value, ast.Constant) and n.value.value is None)
+                       for n in self.p.walk_function_body(info.node))
+        for n in self.p.walk_function_body(info.node):
+            if isinstance(n, ast.Assign) and not (isinstance(n.value, ast.Constant) and n.value.value is None):
+                for t in n.targets:
+                    if isinstance(t, ast.Attribute) and t.attr == "user" and "request" in _u(t.value):
+                        return True
+                    if isinstance(t, ast.Subscript) and isinstance(t.slice, ast.Constant) and \
+                            t.slice.value == "user" and "scope" in _u(t.value):
                         return True
         return False
+
+    LOOKUP_LEAVES = ("get", "filter", "aget", "afilter", "exclude", "get_object_or_404", "aget_object_or_404",
+                     "get_or_create", "exists")
+
+    def field_readers(self) -> dict:
+        """(v6c) {field name: [functions]} for lookups by a field (`M.objects.get(code=v)`, `filter(user=u,
+        code=v)`) and comparisons of a field with a request value (`obj.code == request.POST["code"]`)."""
+        hit = self.__dict__.get("_field_readers")
+        if hit is not None:
+            return hit
+        out: dict = {}
+        inbound = ("POST", "GET", "data", "headers", "cleaned_data", "query_params", "META", "COOKIES")
+        for fq, info in self.p.functions.items():
+            for n in self.p.walk_function_body(info.node):
+                fields, model = [], ""
+                if isinstance(n, ast.Call) and _leaf(n.func) in self.LOOKUP_LEAVES:
+                    m = self._lookup_model(n.func, info) or self._shortcut_model(n, info)
+                    model = m.rsplit(".", 1)[-1] if m else ""
+                    for k in n.keywords:
+                        if k.arg:
+                            parts = k.arg.split("__")
+                            while len(parts) > 1 and parts[-1] in ("exact", "iexact", "in"):
+                                parts.pop()
+                            if len(parts) == 1:
+                                fields.append(parts[-1])
+                elif isinstance(n, ast.Compare):
+                    sides = [n.left] + list(n.comparators)
+                    if any(isinstance(y, ast.Attribute) and y.attr in inbound for x in sides for y in ast.walk(x)):
+                        fields += [x.attr for x in sides if isinstance(x, ast.Attribute)]
+                for f in fields:
+                    row = out.setdefault(f, [])
+                    if (fq, model) not in row:
+                        row.append((fq, model))
+        self._field_readers = out
+        return out
+
+    def weak_value_readers(self, names, owner="") -> str:
+        """(v6c) '' when a value kept under `names` (on model `owner`) may be a credential by how it is read back;
+        otherwise why not: nothing reads it back by that field (a lookup of that model, or of a model MintMap
+        cannot name, or a comparison with a request value), or every reader is analysed and none issues a
+        session or credential (see reader_issues)."""
+        readers = sorted({r for n in names for r, m in self.field_readers().get(n, []) if not m or not owner or
+                          m == owner})
+        if not readers:
+            return "no project code looks it up or compares it by that field (it is not checked as a credential)"
+        undecided = False
+        for r in readers:
+            issues, complete, reaches = self.reader_issues(r)
+            if issues:
+                return ""
+            undecided |= reaches or not complete
+        if undecided:
+            return ""
+        return (f"the code that reads it back ({', '.join(readers[:3])}) neither logs anyone in nor issues a "
+                f"credential")
+
+    CACHE_READ_LEAVES = ("get", "pop", "get_many", "aget", "hget", "hgetall", "getdel")
+
+    def _cache_reader_issuing(self, sink):
+        """(v6c) A project function that reads the cache key pattern of this cache sink back
+        (`cache.get(f"xfer:{n}")`) and that itself, or what it calls (READER_DOWN levels), logs someone in /
+        authenticates a request / issues a credential; None otherwise.  Unlike signed values (often decoded in a
+        codec layer), the caller of a cache reader is not considered: it may log someone in for other reasons."""
+        pats = (self.__dict__.get("_cache_sink_patterns") or {}).get((sink.func, sink.line))
+        if not pats:
+            return None
+        index = self.__dict__.get("_cache_reader_index")
+        if index is None:
+            index = {}
+            for fq, info in self.p.functions.items():
+                if "cache" not in " ".join(self.mentions(info)).lower() and "redis" not in \
+                        " ".join(self.mentions(info)).lower():
+                    continue
+                for n in self.p.walk_function_body(info.node):
+                    if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute) and \
+                            n.func.attr in self.CACHE_READ_LEAVES and n.args:
+                        for k in self.key_patterns(n.args[0], info):
+                            if self.pattern_usable(k) and fq not in index.setdefault(k, []):
+                                index[k].append(fq)
+            self._cache_reader_index = index
+        for pat in sorted(pats):
+            for r in index.get(pat, []):
+                d = self.issuing_distance().get(r)
+                if r != sink.func and d is not None and d <= self.READER_DOWN:
+                    return r      # the reader itself (or what it calls) issues: no caller-side guessing here
+        return None
+
+    def authenticator_lookup_fields(self) -> set:
+        """(v6c) {(model short name or '' when unknown, field)} that project code authenticating requests looks a
+        value up by (`Profile.objects.filter(integration_token=raw)`) in a function that sets request.user /
+        scope["user"] or is the `authenticate()` of an authentication class."""
+        hit = self.__dict__.get("_auth_lookup_fields")
+        if hit is not None:
+            return hit
+        out = set()
+        self._auth_lookup_fields = out
+        for fq, info in self.p.functions.items():
+            if not self.mentions(info) & {"user", "authenticate", "authenticate_credentials", "scope"}:
+                continue
+            if not self._authenticates_request(fq):
+                continue
+            for n in self.p.walk_function_body(info.node):
+                if isinstance(n, ast.Call) and _leaf(n.func) in ("get", "filter", "aget", "afilter", "first",
+                                                                  "get_object_or_404", "exclude"):
+                    m = self._lookup_model(n.func, info) or self._shortcut_model(n, info)
+                    for k in n.keywords:
+                        if k.arg and k.arg not in ("pk", "id") and "__" not in k.arg.replace("__exact", ""):
+                            out.add((m.rsplit(".", 1)[-1] if m else "", k.arg.replace("__exact", "")))
+        return out
+
+    def looked_up_by_authenticator(self, sink) -> bool:
+        """(v6c) A field of this sink's model is how a project authenticator finds the requester."""
+        owner = sink.owner or ""
+        # a known model must match; a sink whose model MintMap could not type matches by the field name
+        return any(f in sink.names and (m == owner or not owner) for m, f in self.authenticator_lookup_fields())
 
     def _parents(self, info) -> dict:
         memo = self.__dict__.setdefault("_parent_maps", {})
@@ -1246,6 +1534,13 @@ class CredentialHeuristics:
         if isinstance(call.args[0], ast.Name):        # `payload = {...}; signer.sign_object(payload)`
             roots += self.local_assignments(info).get(call.args[0].id, [])
         for n in (x for r in roots for x in ast.walk(r)):
+            if isinstance(n, ast.Dict):
+                # (v6c) a payload key that names a principal (`{"user": p.pk}`, `{"uid": u.pk}`, a JWT `sub`)
+                for k, v in zip(n.keys, n.values):
+                    if isinstance(k, ast.Constant) and isinstance(k.value, str) and \
+                            (words(k.value) & self.PRINCIPAL_NOUNS or k.value in ("uid", "sub")) and \
+                            isinstance(v, ast.Attribute) and v.attr in self.PRINCIPAL_ATTRS:
+                        return f"{k.value!r}: {_u(v)}"
             if isinstance(n, ast.Attribute) and n.attr in self.PRINCIPAL_ATTRS:
                 base = n.value
                 chain = []
@@ -1256,6 +1551,9 @@ class CredentialHeuristics:
                     chain.append(base.id)
                 if any(words(c) & self.PRINCIPAL_NOUNS for c in chain):
                     return _u(n)
+                if chain == ["self"] and info.cls and self.is_model(info.cls) and self.principal_like(info.cls):
+                    # (v6c) `self.pk` in a method of the user model (or another principal-like model)
+                    return f"{_u(n)} of {info.cls.rsplit('.', 1)[-1]}"
         return None
 
     # ------------------------------------------------------------------ label expansion
@@ -1285,10 +1583,15 @@ class CredentialHeuristics:
         ctx_words = set().union(*(words(x) for x in list(sink.context) + list(extra_context))) \
             if (sink.context or extra_context) else set()
         owner_words = words(sink.owner) if sink.owner else set()
-        if (owner_words | words(sink.receiver)) & NEGATIVE_OWNER:
+        if self.looked_up_by_authenticator(sink):
+            # (v6c) a project authentication class / request authenticator looks requests up by this field
+            # (`Profile.objects.get(integration_token=raw)` -> request.user): an inbound credential, whatever
+            # integration word its name carries
+            sink_words = sink_words | {"token"}
+        elif (owner_words | words(sink.receiver)) & NEGATIVE_OWNER:
             return None, f"kept on {sink.owner} ({', '.join(sorted(owner_words & NEGATIVE_OWNER))}: an outbound " \
                          f"integration secret, not a login credential)"
-        if sink_words & NEGATIVE_OWNER:
+        if sink_words & NEGATIVE_OWNER and not self.looked_up_by_authenticator(sink):
             # (v6b) `webhook_token`, `callback_secret`: the integration word qualifies the credential noun, whatever
             # the head noun is (an integration secret, not a login credential)
             return None, f"kept as {sink.names} ({', '.join(sorted(sink_words & NEGATIVE_OWNER))}: an " \
@@ -1323,6 +1626,14 @@ class CredentialHeuristics:
                 return None, f"kept as {sink.names} on {sink.owner or 'an object of unknown type'}: a weak " \
                              f"credential word ({', '.join(sorted(weak))}) without a qualifier, a credential-named " \
                              f"owner or a link to a user"
+            if sink.kind in ("model_create", "attribute") and owner_head not in POSITIVE:
+                # (v6c) a weak word on a model linked to a user (a booking reference, a coupon code) is a credential
+                # only if the code that reads it back uses it as one: a lookup or comparison by that field whose
+                # closure logs someone in, authenticates a request or issues a credential (an e-mailed OTP)
+                why = self.weak_value_readers(sink.names, sink.owner)
+                if why:
+                    return None, f"kept as {sink.names} on {sink.owner}: a weak credential word " \
+                                 f"({', '.join(sorted(weak))}) and {why}"
         allw = sink_words | ctx_words | owner_words
         if "api" in allw and allw & {"key", "keys", "token", "tokens"}:
             allw = allw | {"apikey"}
@@ -1374,6 +1685,16 @@ class CredentialHeuristics:
                     "a random password that only set_password/make_password receive (nobody is given it: it "
                     "disables password login)"]))
                 continue
+            if not kept:
+                # (v6c) a value kept in a cache (in the key, `cache.set(f"xfer:{nonce}", ...)`, or as the value)
+                # that project code reads back with the same key pattern to log someone in or authenticate a
+                # request is a credential whatever it is called (a cross-domain hand-off nonce)
+                for s_, _gens in sinks:
+                    issuer = self._cache_reader_issuing(s_) if s_.kind == "cache" else None
+                    if issuer:
+                        kept.append((SINK_RANK.get(s_.kind, 9), True, GENERIC_PURPOSE, s_))
+                        s_.detail += f"; read back from the cache by {issuer}, which logs someone in"
+                        break
             if not kept:
                 self.rejected.append(dict(function=fq, line=line, source=sym, reasons=sorted(set(why))[:3]))
                 continue

@@ -61,6 +61,10 @@ AUTH_STATE_WORDS = {
     "elevation", "reauth", "reauthenticate", "reauthenticated", "reauthentication", "access", "token", "permission",
     "grant", "granted", "trusted", "trust", "device", "password", "reset", "invite", "invitation", "recovery",
     "superuser", "admin"}
+# (v6c) principal nouns: alone (`user_prefers_dark`, `account_tab_open`) they do not make a key authentication state;
+# they count with an identifier / hash / signed value whose key ends in a principal noun (`member_id`, `user_pk`)
+PRINCIPAL_KEY_WORDS = {"user", "customer", "account", "member", "principal", "identity", "staff", "admin",
+                       "superuser", "device"}
 # words of a session key that mark ordinary UI / flow state (they veto the medium rule)
 NOT_AUTH_STATE_WORDS = {
     "cart", "basket", "language", "lang", "locale", "theme", "message", "messages", "redirect", "next", "url", "return",
@@ -69,7 +73,10 @@ NOT_AUTH_STATE_WORDS = {
     "count", "counter", "agent", "country", "ip", "geo", "timezone", "tz", "expiry", "expires", "age", "scope",
     "last", "seen", "activity", "visit", "visited",
     # one-shot UI notices ("show the 'password changed' banner")
-    "enabled", "disabled", "changed", "show", "shown", "display", "success", "notice", "notify", "flash", "toast"}
+    "enabled", "disabled", "changed", "show", "shown", "display", "success", "notice", "notify", "flash", "toast",
+    # (v6c) UI preferences, hints and onboarding
+    "prefers", "preference", "preferences", "tab", "tabs", "sidebar", "collapsed", "compact", "layout",
+    "dismissed", "closed", "opened", "tip", "tips", "hint", "help", "onboarding"}
 # words of a model name that mark a log / file / cache record rather than an elevation bound to the session
 NOT_BOUND_RECORD_WORDS = {"audit", "log", "logs", "history", "file", "files", "cached", "cache", "export", "download",
                           "upload", "report", "event", "events", "notification"}
@@ -321,11 +328,18 @@ class CandidateFinder:
             (isinstance(n, ast.Attribute) and n.attr == "session_key" and isinstance(n.value, ast.Name) and
              n.value.id == x) for n in body)}
         hits = []      # (rank, statement, key text, signals)
+        # (v6c) a session write after the function verified a secret (a password re-check, a PIN, a code) is
+        # authentication state whatever the key is called (`sudo_expires`, `reauth_last`, `twofa_seen`)
+        after_check = self.cred.verifies_secret(info.qualname) and not any(
+            self.a.mint_of(s, self.a.cg.resolve(s, info.cls)) for s in self.a.cg.sites(info.qualname))
         for st, kexpr, vexpr in writes:
             pats = self.cred.key_patterns(kexpr, info)
             kws = _key_words(kexpr, pats)
-            auth = kws & AUTH_STATE_WORDS
             neg = kws & NOT_AUTH_STATE_WORDS
+            state = kws & (AUTH_STATE_WORDS - PRINCIPAL_KEY_WORDS)
+            heads = {w for p in pats if p != "?" for w in [_head_word(p)] if w}
+            principal_key = bool(kws & PRINCIPAL_KEY_WORDS) and bool(heads & PRINCIPAL_KEY_WORDS)
+            auth = state or (kws & PRINCIPAL_KEY_WORDS if principal_key else set())
             vsig = self._value_signals(vexpr, info, local)
             tgt = st.targets[0] if isinstance(st, ast.Assign) else getattr(st, "target", None)
             to_fresh = isinstance(tgt, ast.Subscript) and isinstance(tgt.value, ast.Name) and tgt.value.id in escaping
@@ -338,8 +352,13 @@ class CandidateFinder:
                 rank = "high"
             elif rekey and (vsig & {"principal", "auth_hash"} or auth):
                 rank = "high"
-            elif auth and not neg and vsig & {"principal", "auth_hash", "timestamp", "flag", "signed"}:
+            elif state and not neg and vsig & {"principal", "auth_hash", "timestamp", "flag", "signed"}:
                 rank = "medium"
+            elif principal_key and not neg and vsig & {"principal", "auth_hash", "signed"}:
+                rank = "medium"
+            elif after_check and vsig & {"principal", "auth_hash", "timestamp", "flag", "signed"}:
+                rank = "medium"
+                signals = sorted(set(signals) | {"after_secret_check"})
             else:
                 key = (info.qualname, st.lineno)
                 if key not in self._seen_aside:
@@ -575,6 +594,15 @@ def _user_like(e, info, p) -> bool:
                     if isinstance(x, ast.Call) and _leaf(x.func) in USER_SOURCE_LEAVES:
                         return True
     return False
+
+
+def _head_word(pattern: str) -> str:
+    """(v6c) The head noun of a session key pattern: its last word, skipping identifier suffixes (`member_id` ->
+    member, `auth_user_pk` -> user)."""
+    ws = [w.lower() for w in _WORD_SPLIT.split(pattern.replace("{}", " ")) if w]
+    while ws and ws[-1] in ("id", "pk", "ids", "uuid", "key"):
+        ws.pop()
+    return ws[-1] if ws else ""
 
 
 def _is_request(e) -> bool:
