@@ -303,7 +303,54 @@ class _Evaluator:
             if isinstance(b, (list, tuple)) and isinstance(a, Dynamic):
                 return [PartialUnknown(f"{_unparse(e.left)} +")] + list(b)
             return Dynamic(_unparse(e))
+        if isinstance(e, ast.Call):
+            return self.ev_call(e, env)
+        if isinstance(e, ast.IfExp):
+            # (v6) `a if cond else b` with list values: every item of either branch (MintMap keeps every branch)
+            a, b = self.ev(e.body, env), self.ev(e.orelse, env)
+            if isinstance(a, (list, tuple)) and isinstance(b, (list, tuple)):
+                return list(a) + [x for x in b if x not in a]
+            if isinstance(a, (list, tuple)) and isinstance(b, Dynamic):
+                return list(a) + [PartialUnknown(f"else {_unparse(e.orelse)}")]
+            if isinstance(b, (list, tuple)) and isinstance(a, Dynamic):
+                return list(b) + [PartialUnknown(f"{_unparse(e.body)} if ...")]
+        if isinstance(e, ast.ListComp) and len(e.generators) == 1 and isinstance(e.elt, ast.Name) and \
+                isinstance(e.generators[0].target, ast.Name) and e.generators[0].target.id == e.elt.id and \
+                not e.generators[0].is_async:
+            # (v6) `[m for m in X if m != "a"]`: a filtered copy of a known list
+            g = e.generators[0]
+            src = self.ev(g.iter, env)
+            if isinstance(src, (list, tuple)):
+                out = list(src)
+                for cond in g.ifs:
+                    out = _filter_items(out, cond, e.elt.id)
+                return out
         return Dynamic(_unparse(e))
+
+    def ev_call(self, e, env):
+        """(v6) Settings computed by calls (`X = CONFIG.get("x", [defaults])`, `X = ensure_present(X, "a")`): the
+        literal default of a getter, or the known list passed through an unknown function, is kept, plus a
+        PartialUnknown marker naming the call (`setting_partially_unknown` gap).  Anything else stays Dynamic."""
+        text = _unparse(e)
+        f = e.func
+        leaf = f.attr if isinstance(f, ast.Attribute) else (f.id if isinstance(f, ast.Name) else "")
+        if leaf in ("list", "tuple") and len(e.args) == 1 and not e.keywords:
+            v = self.ev(e.args[0], env)
+            if isinstance(v, (list, tuple)):
+                return list(v)
+        default = next((k.value for k in e.keywords if k.arg in ("default", "fallback")), None)
+        if default is None and leaf.lower().startswith("get") and len(e.args) >= 2:
+            default = e.args[1]
+        if default is not None:
+            dv = self.ev(default, env)
+            if isinstance(dv, (list, tuple)):
+                return list(dv) + [PartialUnknown(f"{text}: configuration may replace the default")]
+        if e.args and not isinstance(e.args[0], ast.Starred):
+            first = self.ev(e.args[0], env)
+            if isinstance(first, (list, tuple)) and any(isinstance(x, str) for x in first):
+                known = [x for x in first if not (isinstance(x, PartialUnknown) and x.text.endswith("(passed through)"))]
+                return known + [PartialUnknown(f"{text}: the list is passed through {leaf}() (passed through)")]
+        return Dynamic(text)
 
     def record(self, name, st):
         if _relevant(name, self.prefixes):
@@ -684,6 +731,22 @@ class _Evaluator:
                 env[name] = alternatives_of(va, vb)
             else:
                 env[name] = va if name in a else vb
+
+
+def _filter_items(items, cond, var):
+    """Apply a simple comprehension filter (`var != "x"`, `var not in ("x", ...)`) to known items; any other
+    condition keeps every item and marks the list partially unknown."""
+    if isinstance(cond, ast.Compare) and isinstance(cond.left, ast.Name) and cond.left.id == var and \
+            len(cond.ops) == 1 and isinstance(cond.ops[0], (ast.NotEq, ast.NotIn, ast.IsNot)):
+        c = cond.comparators[0]
+        drop = None
+        if isinstance(c, ast.Constant):
+            drop = {c.value}
+        elif isinstance(c, (ast.List, ast.Tuple, ast.Set)) and all(isinstance(x, ast.Constant) for x in c.elts):
+            drop = {x.value for x in c.elts}
+        if drop is not None:
+            return [x for x in items if isinstance(x, Dynamic) or x not in drop]
+    return list(items) + [PartialUnknown(f"filtered by {_unparse(cond)}")]
 
 
 def _union_dict(a: dict, b: dict) -> dict:
