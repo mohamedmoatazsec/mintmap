@@ -23,13 +23,22 @@ than telling you *that the set of ways in has changed*.
 2. **Traces them to entry points**: URL routes (including `include()`, routers, helper functions, i18n
    patterns), middleware, admin registrations and library views.
    *Since 0.6.0.dev0 (not yet evaluated on fresh projects):* it also lists lower-confidence **candidates**:
-   hand-written session state (logins, MFA / step-up / impersonation state, session hand-offs), passwords set
-   from a value the code does not generate, the request handed to an authentication-library function the catalog
-   does not describe, unregistered subclasses of minting middleware or views, and project code that authenticates
-   requests itself (DRF authentication classes, `request.user = ...` after a credential check), and mint sites
-   that only start-up, deploy or command-line code reaches (`AppConfig.ready()`, settings, management commands).
-   Candidates are traced, fingerprinted and diffed like paths, but reviewed as one lock entry per kind
-   (`candidates:<kind>`) whose sites are ranked and carry the reason they were reported.
+   hand-written session state (logins, MFA / step-up / impersonation state, session hand-offs, any session write
+   right after a password or PIN re-check), passwords set from a value the code does not generate, calls into an
+   authentication library the catalog does not describe (also packages the catalog does not cover at all, when the
+   function's name says it logs in or issues a token and it receives the request or a user), unregistered
+   subclasses of minting middleware or views, project code that authenticates requests itself (DRF authentication
+   classes, another framework's `authenticate(self, request, ...)`, every `request.user = ...` /
+   `scope["user"] = ...` that is not an anonymous user, ranked high when no credential check is visible), and mint
+   sites that only start-up, deploy or command-line code reaches (`AppConfig.ready()`, settings, management
+   commands, data migrations).  Candidates are traced, fingerprinted and diffed like paths, but reviewed as one
+   lock entry per kind (`candidates:<kind>`) whose sites are ranked and carry the reason they were reported.
+   *Also new:* sites that a precision rule **set aside** as not being credentials (random values kept under a
+   name without a credential word, signed values no reader uses to log anyone in, session ids that load a
+   non-principal object, generators nothing references) are **watched**: one low-ranked lock entry per rule
+   (`watched:<kind>`), fingerprinted by the site's own code and the entry points reaching it, so a wrong
+   judgement on unfamiliar code still shows up in `diff`.  Values set aside because their name says they are an
+   identifier, a file, a cache key and so on are only listed in the JSON report.
 3. **Records the checks it can see on the way**: password, TOTP, WebAuthn, token signature, permission gates, and
    a best-effort judgement of whether each check's result decides the outcome. This evidence is often weaker than
    the truth and sometimes wrong (see [Accuracy](#accuracy)).
@@ -70,9 +79,10 @@ git add path/to/django/project/mintmap.lock && git commit -m "Add reviewed MintM
 
 The text report of `scan` starts with a **review queue** (0.6.0.dev0): confirmed paths grouped by credential kind
 (`kind:session`, `kind:token`, `kind:precursor`, `kind:custom`, `kind:other`) and entry point, candidate sites by
-kind, and the settings groups; inside a group the entries are ranked by a transparent risk score (credential kind,
-check evidence, reachability, confidence), each with a `why` line. `mintmap accept --group <group>` accepts one
-such group. Lock entries carry the same information in an informational `review` block that `diff` ignores (locks
+kind, the settings groups and the watched groups; inside a group the entries are ranked by a transparent risk
+score (credential kind, check evidence, reachability, confidence; an unrouted path is scored like a reachable one,
+because on unfamiliar code a route MintMap did not see is the common case), each with a `why` line.
+`mintmap accept --group <group>` accepts one such group. Lock entries carry the same information in an informational `review` block that `diff` ignores (locks
 written by 0.5.0a1 stay valid; `mintmap update` adds it).
 
 After an intended change: `mintmap update <dir>` refreshes the lock (changed entries become unreviewed again),
@@ -123,14 +133,19 @@ its tests) in the same job before MintMap: anything that runs in the job can rep
 | 128 | `error` | MintMap could not run (bad arguments, missing or invalid lock, catalog error, or an internal error) |
 
 A candidate group (`candidates:<kind>`) uses the same bits for its sites (a new site sets 1, a vanished one 2, a
-changed one 4, naming new or lost entry points); its findings carry `"tier": "candidate"`.
+changed one 4, naming new or lost entry points); its findings carry `"tier": "candidate"`. A watched group
+(`watched:<kind>`) does the same with `"tier": "watched"`. A mint site shared by many entry points (one lock entry
+listing them) sets bit 1 when a new entry point reaches it, and the finding names that entry point.
 
 Formatting, comments, docstrings and renamed local variables are normalised and do not change fingerprints. Simple
 extractions of a helper function in the same module are normalised too, but extracting a method, extracting a
 helper that takes expressions as arguments, or moving code to another module still changes the fingerprint (a
 false alarm): in the evaluation, 3 of 8 extract-function refactors raised a finding. (0.6.0.dev0, not yet
 evaluated: extracting a method of the same class that no subclass overrides, and helpers called with attribute
-arguments such as `request.META`, are normalised as well; moving code to another module or class still is not.)
+arguments such as `request.META`, are normalised as well, unless a call in the helper could rebind the attribute
+(for example the helper calls `load_account(self, ...)` and the argument is `self.account`); so are moving the
+mint call itself into such a helper, and extracting a method in a class that a hook setting names; moving code to
+another module or class still is not.)
 
 ## Accuracy
 
@@ -182,6 +197,18 @@ measured on projects the tool was not developed against yet.
 - Django only. Library knowledge covers Django auth, DRF, SimpleJWT, knox, djoser, dj-rest-auth, django-allauth,
   social-auth, django-otp, two-factor-auth, sesame, oauth-toolkit and a few more (15 packages). Other libraries
   usually show up as gaps, but not always (see [Accuracy](#accuracy)).
+
+Shapes found silent by a review of 0.6.0.dev0 on 31 synthetic projects, and how the current tree handles them
+(not yet measured on fresh projects): custom model managers and querysets (`objects = KeyManager()`,
+`QS.as_manager()`: now resolved), uncatalogued authentication libraries called directly (now candidates when the
+function name says it logs in or issues a token), non-DRF request authenticators (Channels `scope["user"]`,
+django-ninja `authenticate()`, `request.user = SimpleLazyObject(...)`: now candidates), class-based settings
+(django-configurations: now read), project code that libraries call through settings, signals or permission
+registries (`CAN_LOGIN_AS = "..."`, `@receiver(populate_user)`, `rules.add_perm(...)`: now hashed in a
+`settings:AUTH_HOOKS(project code)` entry), and URL lists filled at run time by a decorator (now a gap; the
+views stay unrouted).  Still not modelled: a signed cookie (`set_signed_cookie`) is not a credential of its own
+(its reader is a candidate when it sets `request.user`), and checks reached through code MintMap cannot resolve can
+still sit outside every fingerprint.
 
 ## How is this different from Semgrep or CodeQL?
 
