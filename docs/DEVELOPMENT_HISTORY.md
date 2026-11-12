@@ -13,7 +13,7 @@
 > and the GitHub Action: [ENFORCEMENT.md](ENFORCEMENT.md).
 >
 > v6 (0.6.0.dev0) was developed in the release package (`src/mintmap/`) and is summarised in the first section
-> below; it has not been evaluated on fresh projects.
+> below, in three parts (v6a, v6b, v6c); it has not been evaluated on fresh projects.
 >
 > Changes in release 0.5.0a1 after this log: fingerprints, gap keys and settings values use a
 > Python-version-independent AST dump and unparser (identical to the evaluated ones on Python 3.13, except that
@@ -53,7 +53,7 @@ fixes tuned on development projects did not transfer. v6 therefore adds broad st
 **candidate tier** that makes new shapes visible and diffable at low review cost, plus false-alarm reductions. Those
 three projects are now development projects; the evaluation of v6 needs fresh ones. Every rule has a synthetic
 fixture test (`tests/test_v6.py`, 30 tests; `tests/test_v6b.py`, 19 tests; `tests/test_v6c.py`, 22 tests for the second
-part, v6b, below; no project code copied).
+part, v6b, below; `tests/test_v6d.py`, 67 tests for the third part, v6c; no project code copied).
 
 **Harness (A0).** `run_all.py` / `units.json` cover all eight development projects: the saved mutations of InvenTree,
 Weblate and pretix with their labels, the verifiers' own probes (InvenTree v1-v6, Weblate v1, pretix y1-y3) and 149
@@ -261,6 +261,163 @@ Every unmodified diff exits 0; locks written with Python 3.11 and 3.13 are ident
   the code as written (a check moved into a helper can read weaker).
 * The signed-value rule trusts the project's readers: a value read back by a library, by code in another
   repository, or without a comparable salt keeps the earlier decision.
+
+### v6, third part (v6c): two adversarial reviews of v6b; generalisation over development numbers
+
+Frozen v5 missed 30% of the credential units of three unseen projects with no visible gap, and v4 had the same
+rate on its own held-out set; v6a/v6b then reached near-perfect numbers on the projects they were built from. Two
+adversarial reviews of v6b showed what that was worth: a soundness review found 11 changes that v6b let through
+with exit 0 (most of them regressions introduced by the v6 precision rules), and a generalisation review wrote 31
+new synthetic projects (31 auth shapes, 51 units, 36 should-flag and 9 harmless mutations) on which v6b caught
+19/35 harmful changes, no more than the evaluated v5 (19) and fewer than v6a (21), with 11 units silent. The
+precision rules had removed real paths into JSON-only `set_aside` lists, invisible to `diff`. This round therefore
+changes structure more than vocabulary: every judgement that drops a site now leaves it visible and diffed.
+Synthetic fixture tests: `tests/test_v6d.py` (67 tests, no project code). The reviewers' fixtures are part of the
+development set from now on, so their numbers below are not a generalisation measure either.
+
+**Watched tier** (the main change). A site that a precision rule sets aside as *not a credential* (a random value
+kept under a name without a credential word, a weak word nobody checks, an integration-named secret; a signed value
+without a credential name or principal payload, or whose readers issue nothing; a session write whose key loads a
+non-principal object; a generator nothing references) is a report entry (`watched`) and a lock entry per rule
+(`watched:<kind>`, rank low, with the reason). Its fingerprint is deliberately narrow: the site function's
+normalised code, the symbol and the entry points reaching it, so a weakened generator, a check removed in the
+writer, or a new route to the site is a finding (bits 1 / 2 / 4, `tier: "watched"`), while edits elsewhere on the
+paths are not. Values set aside because their name says they are an identifier, a file, a cache key ... stay in the
+JSON report only. Development projects carry 1-30 watched sites in 1-4 groups.
+
+**Soundness (regressions of v6a/v6b).**
+* Inliner: an attribute-chain argument (`request.team`, `self.account`) is substituted only when no call in the
+  helper receives an object the chain goes through (`load_account(self, ...)`, `activate_team(request, ...)`,
+  `self.reload()`): such a call may rebind the attribute, and the reviewed check would silently move onto the old
+  object.
+* `installed_app` flow conditions compare `AppConfig.name` (django/apps/registry.py:242-249): a project subclass of
+  a library AppConfig installs that app; an AppConfig MintMap cannot read keeps the flow.
+* Absent settings: `ALLAUTH_SETTING_GETTER` (catalog `settings_read_through`, allauth/utils.py:223-230),
+  `setattr(settings, "X", v)` at run time, and `globals()` / `vars()` / `locals()` / `sys.modules` writes in a
+  settings module keep the flows a library default would switch off (a computed key may assign any setting; a
+  `globals().update(...)` whose dict has constant keys, also built by a project function, assigns only those).
+* Signed values: readers with the same salt (or the same PyJWT key), also a bare `loads` import, are followed up to
+  four levels of callers (codec -> service -> view); a value whose reader logs someone in or authenticates a
+  request is a mint whatever it is called; a credential-looking value is set aside only when every reader is
+  analysed and reaches no issuing code at any depth.
+* Session lookups: `request.user = obj.owner` (anything derived from the looked-up object) attaches it; a session
+  id written right after a secret check (`pin != POST["pin"]`, `compare_digest`, `check_password`) is a login
+  whatever the model is called (kiosk / terminal / employee logins).
+* An integration-named field that a project authenticator looks requests up by is a credential.
+* Test-helper modules named by dotted strings (`include("x.test_utils.urls")`, MIDDLEWARE) are analysed.
+* Functions of a module dispatched into with `getattr(module, <computed>)` are not dead code; dead-code generators
+  are watched instead of dropped.
+* A mint only a data migration reaches is a `startup_only` candidate (also through `apps.get_model(...)`).
+* `request.user = ...` / `scope["user"] = ...` is a candidate without a visible credential check (rank high).
+
+**Recall on new shapes.**
+* Custom managers and querysets: `Model.objects.<m>()` resolves to the project manager / queryset method
+  (`objects = M()`, `QS.as_manager()`, `Manager.from_queryset(QS)()`); `self.create(...)` / `self.model(...)` in a
+  manager create its model; chained queryset calls keep the queryset type.
+* Candidates: other frameworks' `authenticate(self, request, ...)` (django-ninja), Channels `scope["user"]`,
+  `SimpleLazyObject(lambda: helper(request))` (the helper is in the candidate's callees); calls into packages the
+  catalog does not cover at all when the function name says it logs in or issues a token (`sign_in_as`,
+  `token_for`) and it receives the request or a user.
+* `settings:AUTH_HOOKS(project code)`: callables named by auth-named settings of uncatalogued libraries
+  (`CAN_LOGIN_AS`), receivers of authentication-library signals (`populate_user`, `user_logged_in`), predicates
+  registered with permission registries (`rules.add_perm`), each hashed with its callee closure.
+* A random nonce kept in a cache key that a view reads back to log the user in is a credential (cross-domain
+  hand-off); Django's `SESSION_KEY` constants resolve to `_auth_user_id`.
+* Class-based settings (django-configurations) are evaluated; a URL list filled at run time by a decorator is a
+  `url_list_filled_at_run_time` gap; unrouted paths are scored like reachable ones in the review queue.
+
+**False alarms and review cost.**
+* Weak words (`code`, `key`, `pin`) on a user-linked model need a reader (a lookup or a comparison by that field):
+  a booking reference or coupon code nobody checks is watched, not a path.
+* `session_state`: principal nouns alone (`user_prefers_dark`) and UI hint words do not make a candidate; keys
+  recording a failed check (`bad_link`) do not either.
+* The `SECRET_KEY_FALLBACKS` re-hash branch of AuthenticationMiddleware is a path only when fallbacks are
+  configured (catalog `library_flow_conditions`, django/contrib/auth/__init__.py:309-314); `DEBUG` is an allauth
+  setting only in projects that use allauth, and package settings groups need the package.
+* A catalogued mint reached through a signal receiver from six or more entry points is one grouped entry (better
+  manager resolution had connected 23 Weblate views to the token a receiver creates for every new bot user); a new
+  entry point reaching any grouped site is a NEW_PATH that names it.
+* Extract refactors: a mint moved into an inlined helper keeps its path id and code; nested `and` / `or` are
+  flattened; inlined private methods of hook classes are not hook roots.
+* Name fallback: up to six project definitions are hashed; more set `fingerprint_complete` false
+  (`fingerprint_name_fallback_limit`) instead of hashing nothing silently.
+
+Changed earlier expectations: none of the existing tests changed; `mm_testutil.accept_all` also accepts watched
+groups. Lock format: a `watched` list next to `candidates` (older locks: the watched groups are new entries on the
+first diff; run `mintmap update`). Path ids of mints inside small helpers that their caller inlines changed (the
+caller is now the identity), so the first `diff` after upgrading reports those paths as removed and new.
+
+**Before / after** (regression harness `v5r` -> `v6b` -> `v6` = this tree; same saved mutations, units and
+adjudications; `--library-path` not used). Lock entries = path entries + settings entries + candidate groups
+(candidate sites) + watched groups [watched sites]. Recall = exact / mint only / gap / **silent** (automatic unit
+scorer; watched sites do not count). FA = adjudicated false alarms still reported (any tier) / reported items nobody
+adjudicated; precision as in the v6b table (paths + candidate sites; watched sites are not reported items).
+
+| project | run | lock entries | recall exact / mint only / gap / **silent** | harmful caught | harmless flagged | FA known / unadj. | precision, all items | precision, confirmed paths | scan s |
+|---|---|---|---|---|---|---|---|---|---|
+| Healthchecks | v5r | 32 + 6 | - | 6/6 | 0/3 | - | - | - | 2.69 |
+|  | v6b | 27 + 6 + 1 (2) | - | 6/6 | 0/3 | - | - | - | 2.19 |
+|  | **v6** | 27 + 5 + 1 (2) + 2 [13] | - | 6/6 | 0/3 | - | - | - | 2.39 |
+| paperless-ngx | v5r | 33 + 7 | 18 / 0 / 6 / **0** of 24 | 12/12 | 0/3 | 4 / 9 | 61%-88% | 61%-88% | 5.5 |
+|  | v6b | 34 + 7 + 3 (8) | 18 / 0 / 6 / **0** of 24 | 12/12 | 0/3 | 4 / 18 | 48%-90% | 59%-88% | 3.91 |
+|  | **v6** | 34 + 7 + 3 (8) + 1 [1] | 18 / 0 / 6 / **0** of 24 | 12/12 | 0/3 | 4 / 18 | 48%-90% | 59%-88% | 4.14 |
+| netbox | v5r | 9 + 9 | 10 / 1 / 2 / **2** of 15 | 11/11 | 0/3 | 0 / 3 | 67%-100% | 67%-100% | 23.01 |
+|  | v6b | 8 + 9 + 4 (9) | 12 / 2 / 1 / **0** of 15 | 11/11 | 0/3 | 0 / 8 | 53%-100% | 75%-100% | 20.05 |
+|  | **v6** | 8 + 10 + 4 (9) + 1 [1] | 12 / 2 / 1 / **0** of 15 | 11/11 | 0/3 | 0 / 8 | 53%-100% | 75%-100% | 20.16 |
+| plane | v5r | 35 + 7 | 25 / 0 / 0 / **0** of 25 | 11/11 | 0/6 | 3 / 6 | 74%-91% | 74%-91% | 10.44 |
+|  | v6b | 35 + 7 + 2 (8) | 25 / 0 / 0 / **0** of 25 | 11/11 | 0/6 | 3 / 14 | 60%-93% | 74%-91% | 8.96 |
+|  | **v6** | 34 + 6 + 2 (8) + 1 [2] | 25 / 0 / 0 / **0** of 25 | 11/11 | 0/6 | 2 / 14 | 62%-95% | 76%-94% | 9.54 |
+| InvenTree | v5r | 36 + 10 | 9 / 3 / 27 / **5** of 44 | 14/19 | 2/10 | 17 / 0 | 53%-53% | 53%-53% | 11.42 |
+|  | v6b | 25 + 10 + 3 (10) | 26 / 3 / 15 / **0** of 44 | 19/19 | 0/10 | 4 / 7 | 69%-89% | 88%-96% | 8.55 |
+|  | **v6** | 24 + 11 + 3 (12) + 1 [1] | 26 / 3 / 15 / **0** of 44 | 19/19 | 0/10 | 4 / 8 | 67%-89% | 92%-96% | 8.56 |
+| Weblate | v5r | 103 + 11 | 14 / 7 / 3 / **12** of 36 | 13/21 | 1/5 | 61 / 0 | 41%-41% | 41%-41% | 37.62 |
+|  | v6b | 37 + 11 + 4 (15) | 26 / 6 / 2 / **2** of 36 | 21/21 | 0/5 | 8 / 16 | 54%-85% | 59%-78% | 33.28 |
+|  | **v6** | 38 + 12 + 4 (16) + 3 [19] | 26 / 6 / 2 / **2** of 36 | 21/21 | 0/5 | 9 / 17 | 52%-83% | 58%-76% | 39.57 |
+| pretix | v5r | 91 + 9 | 33 / 7 / 1 / **28** of 69 | 13/18 | 1/5 | 49 / 0 | 46%-46% | 46%-46% | 32.31 |
+|  | v6b | 81 + 9 + 3 (17) | 55 / 12 / 0 / **2** of 69 | 18/18 | 0/5 | 21 / 17 | 61%-79% | 64%-74% | 30.58 |
+|  | **v6** | 84 + 9 + 3 (18) + 4 [30] | 55 / 12 / 0 / **2** of 69 | 18/18 | 0/5 | 21 / 21 | 59%-79% | 62%-75% | 31.66 |
+| Zulip (scan only) | v5r | 121 + 10 | - | 0/0 | 0/0 | - | - | - | 40.06 |
+|  | v6b | 97 + 10 + 2 (8) | - | 0/0 | 0/0 | - | - | - | 38.43 |
+|  | **v6** | 97 + 8 + 3 (10) + 2 [7] | - | 0/0 | 0/0 | - | - | - | 41.54 |
+
+Totals: harmful mutations caught 80/98 (v5r) -> 98/98 (v6b) -> **98/98** (v6); harmless changes flagged 4/35 -> 0/35
+-> **0/35**. Recall (213 units) unchanged from v6b: exact 162, mint only 23, gap 24, silent 4. Round-3 projects:
+reported items (paths + candidate sites) 230 -> 185 -> 192, adjudicated false alarms still reported 127 -> 33 -> 34,
+unadjudicated 0 -> 40 -> 46; precision 45% -> 61-82% -> 58-82% (confirmed paths only: 45% -> 67-79% -> 66-79%);
+day-one lock entries 260 -> 183 -> 196 (of which 8 watched groups with 50 sites, accepted as groups). Harness wall
+time 1271 s (v6b) -> 1454 s (v6). Every unmodified diff exits 0; locks written with Python 3.11 and 3.13 are
+identical apart from the `tool` block (Healthchecks and two of the new fixture projects).
+
+**The reviewers' fixtures (now development fixtures, not a generalisation measure).** Soundness cases: every one of
+the 11 changes that v6b let through is a finding (c02, c02c, c04, c04b, c05 x5, c07 x2, c08b x3, c09 x2, c11, c14,
+c16, c17b, c19, c19b, c20). Generalisation projects: should-flag mutations caught 19/35 (v6b; 20/36 with the
+reviewers' control m36) -> 36/36; harmless mutations flagged 3/9 -> 0/9 (h03, a log line on a reviewed path, is a
+code change and is excluded as in the review). Of the 11 units the review found silent, 10 are now visible: eight as
+confirmed paths or a candidate (g09.1, g10.1, g17.1, g20.1, g20.2, g30.1, g31.1 confirmed; g21.1 a candidate), two
+only as watched sites (g07.1 websocket ticket, g14.2 deploy key); the remember-me cookie (g16.2, `set_signed_cookie`)
+is still not a credential of its own (its reader is a request-authenticator candidate).
+
+### v6c limits
+
+* Every number is on development projects; InvenTree, Weblate and pretix and the reviewers' 31 synthetic projects
+  were used to find the problems. Only a fresh evaluation can tell whether the structural rules generalise.
+* Review cost went up a little: the round-3 projects have 13 more (196) day-one lock entries (watched groups, the
+  AUTH_HOOKS settings group) and 6 more (46) unadjudicated reported items (new request-authenticator and
+  uncatalogued-library candidates, user creations that better manager resolution now links to routes); the
+  adjudicated false alarms still reported are 34 (one more) (Weblate's password-reset scope token is a path again:
+  its reader's view sets a password, which is what the reader rule looks for).
+* The reader rules (signed values, cache keys, weak words, session keys) decide by reachability, not data flow: a
+  reader whose caller logs someone in for an unrelated reason makes a value a credential.
+* A watched site's fingerprint is its own function: an edit there for an unrelated reason is a finding (CI noise),
+  and a change elsewhere on its paths (a caller dropping a check) is not.
+* Path ids of mints inside small helpers that their caller inlines changed (the caller is the identity now): the
+  first `diff` after upgrading from v6b reports those paths as removed and new; `mintmap update` re-baselines.
+* Scan time: Weblate 33 -> 40 s, Zulip 38 -> 41 s, other projects within noise (new whole-project passes for
+  hooks, readers and dynamic dispatch).
+* Not done: signed cookies as credentials; routes registered by decorators at run time stay unrouted (gap only);
+  a weak-word value is kept as a credential as soon as any project code looks it up by its field (a booking
+  reference read back by a lookup stays a path); `globals().update(...)` with keys MintMap cannot read keeps
+  every flow a default would switch off (InvenTree-style LDAP dicts with constant keys are read).
 
 ## What changed in v5 (review round: 22 findings of two adversarial reviews of part B)
 
