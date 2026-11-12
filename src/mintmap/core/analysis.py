@@ -2189,7 +2189,15 @@ class Analysis:
                 for site in self.cg.sites(fq):
                     inline_edge = id(site.node) in inl
                     res = self.cg.resolve(site, ctx)
-                    for t, tctx in res.targets or self.unresolved_method_targets(site, res):
+                    if not res.targets:
+                        # (v6) fingerprint-only fallback: the candidate methods are hashed, not traversed
+                        for t, _tctx in self.unresolved_method_targets(site, res):
+                            hashed.add(t)
+                            if t not in seen:
+                                seen.add(t)
+                                order.append(t)
+                        continue
+                    for t, tctx in res.targets:
                         node = (t, tctx if tctx else (self.p.functions[t].cls if t in self.p.functions else None))
                         if not inline_edge:
                             hashed.add(t)
