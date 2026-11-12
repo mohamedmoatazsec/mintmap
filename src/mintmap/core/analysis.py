@@ -3397,6 +3397,9 @@ class Analysis:
     # (v6) 3, was 6: with URL-prefix twins merged, shared heuristic sites reached from 3-5 routes were split into
     # one path per route again; a lower-confidence site shared by three entry points is reviewed once
     HEURISTIC_GROUP_MIN = 3
+    # (v6c) a catalogued mint reached through a signal receiver from this many entry points is one lock entry too; a
+    # new entry point reaching it is a NEW_PATH that names it
+    CATALOG_GROUP_MIN = 6
 
     def group_shared_heuristic_sites(self, paths) -> list:
         """(v5 review) Review cost of R3 on large projects: a heuristic credential site (a model creation with a
@@ -3405,19 +3408,26 @@ class Analysis:
         helper into dozens of findings.  Such a site becomes ONE lock entry (`entry.kind = heuristic_site`) whose
         fingerprint combines every member path's components keyed by entry id (a new or lost entry point, or a
         change on any member path, changes it: one finding), whose factors are the weakest over the members, and
-        whose gaps are their union.  Catalog mints and sites reached from fewer entry points keep one path per
-        entry."""
+        whose gaps are their union.  Sites reached from fewer entry points keep one path per entry.  (v6c) A catalog
+        mint reached through a signal receiver is grouped the same way from CATALOG_GROUP_MIN entry points."""
         groups: dict = {}
         for p in paths:
-            if p["mint"]["kind"] != HEURISTIC_KIND or p["entry"]["kind"] == "unrouted" or p.get("tier") == "candidate":
-                continue
             site = p["mint"].get("site") or {}
+            if not site or p["entry"]["kind"] == "unrouted" or p.get("tier") == "candidate":
+                continue
             # (v6) line-independent: a line inserted above the site must not replace the entry
             groups.setdefault((p["mint"]["api"], site.get("function"), None), []).append(p)
         drop, add = set(), []
+        receivers = {f for fs in self.cred.signal_receivers().values() for f in fs}
         for key, ps in sorted(groups.items(), key=lambda kv: str(kv[0])):
+            heuristic = ps[0]["mint"]["kind"] == HEURISTIC_KIND
+            if not heuristic:
+                # (v6c) a catalogued mint reached only through a signal receiver (a token created for every new
+                # user, also bot / service users that many views create on the side): one lock entry from
+                # CATALOG_GROUP_MIN entry points; entry points that call the mint directly keep their own path
+                ps = [p for p in ps if set(p["chain"]) & receivers]
             ids = sorted({p["entry"]["id"] for p in ps})
-            if len(ids) < self.HEURISTIC_GROUP_MIN:
+            if len(ids) < (self.HEURISTIC_GROUP_MIN if heuristic else self.CATALOG_GROUP_MIN):
                 continue
             drop |= {id(p) for p in ps}
             add.append(self._grouped_path(key, ps, ids))
