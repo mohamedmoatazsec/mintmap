@@ -327,6 +327,37 @@ class _Evaluator:
                 return out
         return Dynamic(_unparse(e))
 
+    def _returned_literal(self, e, env):
+        """(v6) A call to a project function whose body is one `return {...}` / `return [...]` (a settings
+        factory such as `REST_FRAMEWORK = api_settings(require_login=X)`): the returned literal, evaluated with
+        the parameters bound to the call's arguments (parameters without an argument are unknown)."""
+        mod = getattr(self, "_cur_mod", None)
+        if mod is None or len(getattr(self, "_ret_stack", ())) > 3:
+            return None
+        q = self.p.resolve_expr_static(mod.name, e.func)
+        q = self.p.canonical(q) if q else None
+        info = self.p.functions.get(q or "")
+        if info is None or info.cls or not isinstance(info.node, ast.FunctionDef):
+            return None
+        lit = _single_return(info.node)
+        if lit is None:
+            return None
+        a = info.node.args
+        params = [x.arg for x in a.posonlyargs + a.args]
+        local = {x.arg: Dynamic(x.arg) for x in a.posonlyargs + a.args + a.kwonlyargs}
+        for i, arg in enumerate(e.args):
+            if isinstance(arg, ast.Starred) or i >= len(params):
+                break
+            local[params[i]] = self.ev(arg, env)
+        for k in e.keywords:
+            if k.arg and k.arg in local:
+                local[k.arg] = self.ev(k.value, env)
+        self._ret_stack = getattr(self, "_ret_stack", ()) + (q,)
+        try:
+            return self.ev(lit, local)
+        finally:
+            self._ret_stack = self._ret_stack[:-1]
+
     def ev_call(self, e, env):
         """(v6) Settings computed by calls (`X = CONFIG.get("x", [defaults])`, `X = ensure_present(X, "a")`): the
         literal default of a getter, or the known list passed through an unknown function, is kept, plus a
@@ -338,6 +369,9 @@ class _Evaluator:
             v = self.ev(e.args[0], env)
             if isinstance(v, (list, tuple)):
                 return list(v)
+        ret = self._returned_literal(e, env)
+        if ret is not None:
+            return ret
         default = next((k.value for k in e.keywords if k.arg in ("default", "fallback")), None)
         if default is None and leaf.lower().startswith("get") and len(e.args) >= 2:
             default = e.args[1]
@@ -446,6 +480,7 @@ class _Evaluator:
                     env.pop(n, None)
 
     def run_stmt(self, mod, st, env, stack):
+        self._cur_mod = mod
         if isinstance(st, (ast.FunctionDef, ast.AsyncFunctionDef)):
             self.fdefs.setdefault(mod.name, {})[st.name] = st
             return
@@ -731,6 +766,14 @@ class _Evaluator:
                 env[name] = alternatives_of(va, vb)
             else:
                 env[name] = va if name in a else vb
+
+
+def _single_return(fdef):
+    body = [st for st in fdef.body if not (isinstance(st, ast.Expr) and isinstance(st.value, ast.Constant))]
+    if len(body) == 1 and isinstance(body[0], ast.Return) and isinstance(body[0].value, (ast.Dict, ast.List,
+                                                                                          ast.Tuple)):
+        return body[0].value
+    return None
 
 
 def _filter_items(items, cond, var):

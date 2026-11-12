@@ -587,6 +587,37 @@ class SettingsCallTests(unittest.TestCase):
         self.assertTrue(code & 4, findings)
 
 
+class SettingsFactoryTests(unittest.TestCase):
+    def test_settings_returned_by_a_project_factory_function_are_evaluated(self):
+        files = {"conf/urls.py": "urlpatterns = []\n", "conf/api.py": """\
+                    def api_settings(*, strict):
+                        \"\"\"Shared DRF settings.\"\"\"
+                        return {
+                            "DEFAULT_AUTHENTICATION_CLASSES": [
+                                "club.auth.KeyAuthentication",
+                                "rest_framework.authentication.SessionAuthentication",
+                            ],
+                            "DEFAULT_PERMISSION_CLASSES": ["rest_framework.permissions.IsAuthenticated"],
+                        }
+                 """, "club/auth.py": """\
+                    from rest_framework.authentication import TokenAuthentication
+
+
+                    class KeyAuthentication(TokenAuthentication):
+                        keyword = "Key"
+                 """}
+        root = project(self, files, init=("conf", "club"),
+                       settings_extra="from conf.api import api_settings\nREST_FRAMEWORK = api_settings(strict=True)\n")
+        rep = scan(root)
+        self.assertFalse([g for g in gaps(rep, "dynamic_setting") if "REST_FRAMEWORK" in g["key"]])
+        findings, code = run_diff(self, root, lambda: replace_in(
+            root, "conf/api.py", '"rest_framework.authentication.SessionAuthentication",',
+            '"rest_framework.authentication.SessionAuthentication",\n'
+            '                "rest_framework.authentication.BasicAuthentication",'))
+        self.assertTrue(code & 4, findings)
+        self.assertTrue(any("BasicAuthentication" in f["message"] for f in findings), findings)
+
+
 # ============================================================================ unregistered minting subclasses
 class MintingSubclassTests(unittest.TestCase):
     def test_subclass_nobody_registers_is_a_candidate_and_fingerprinted(self):
