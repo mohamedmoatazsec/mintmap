@@ -68,7 +68,7 @@ SIGNING_LEAVES = {"sign", "sign_object", "dumps", "encode"}
 TIME_LEAVES = {"time", "now", "timestamp", "monotonic", "utcnow", "time_ns"}
 # request-taking library functions that only read or build objects (accessors, predicates, loaders)
 ACCESSOR_PREFIXES = ("get_", "is_", "has_", "load_", "build_", "reverse", "render", "format_", "can_", "should_",
-                     "_")
+                     "did_", "was_", "_")
 # packages whose purpose is authentication (catalogued); Django and DRF are described function by function instead
 AUTH_PACKAGES = {"allauth", "django_otp", "two_factor", "knox", "sesame", "social_django", "social_core",
                  "dj_rest_auth", "djoser", "hijack", "oauth2_provider", "mozilla_django_oidc",

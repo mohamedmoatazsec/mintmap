@@ -10,6 +10,8 @@ written for these tests; no development-project code is copied.
     UpdateIsNotCreationTests   read-only DRF viewsets have no create flow; perform_update / UpdateView saves and
                                perform_destroy(instance).save() update an existing row; a generator function nothing
                                calls or names is set aside until something does
+    PredicateCallTests         `did_*` / `was_*` predicates of an authentication package are not auth_library_call
+                               candidates
 """
 import json
 import unittest
@@ -245,6 +247,36 @@ class UpdateIsNotCreationTests(unittest.TestCase):
             "        instance.active = False\n        from club.models import spare_secret\n"
             "        instance.name = spare_secret()\n"))
         self.assertTrue(code & 1, findings)
+
+
+# ============================================================================ predicates of auth packages
+PREDICATE_VIEWS = """\
+from django.http import HttpResponse
+from allauth.account.internal.flows.reauthentication import did_recently_authenticate, reauthenticate_by_password
+
+
+def sensitive(request):
+    if not did_recently_authenticate(request):
+        return HttpResponse(status=401)
+    return HttpResponse("ok")
+
+
+def step_up(request):
+    reauthenticate_by_password(request)
+    return HttpResponse("ok")
+"""
+
+
+class PredicateCallTests(unittest.TestCase):
+    def test_predicate_is_not_a_candidate_but_a_flow_is(self):
+        urls = """\
+            from django.urls import path
+            from club import pv
+            urlpatterns = [path("sensitive/", pv.sensitive), path("stepup/", pv.step_up)]
+        """
+        rep = scan(project(self, {"conf/urls.py": urls, "club/pv.py": PREDICATE_VIEWS}, init=("conf", "club")))
+        calls = [c["mint"]["api"] for c in rep["candidates"] if c["candidate"]["group"] == "auth_library_call"]
+        self.assertEqual(calls, ["allauth.account.internal.flows.reauthentication.reauthenticate_by_password"])
 
 
 if __name__ == "__main__":
