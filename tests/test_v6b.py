@@ -16,7 +16,8 @@ written for these tests; no development-project code is copied.
                                default or a view attribute) and `request.user = ...` in project code are reviewed and
                                fingerprinted; weakening one is a finding
     RouterAliasTests           `api_urls = router.urls` in one module included as `mod.api_urls` from another is
-                               the router's routes (was an unattached unsupported_url_construct gap)
+                               the router's routes (was an unattached unsupported_url_construct gap); an instance of
+                               a project class with __call__ used as a view is routed to its __call__
 """
 import json
 import unittest
@@ -448,6 +449,37 @@ class RouterAliasTests(unittest.TestCase):
         self.assertFalse([g for g in rep["coverage"]["gaps"] if g["type"] == "unsupported_url_construct"])
         self.assertTrue([p for p in rep["paths"] if p["entry"]["id"] == "route:api/admin/service/|club.svc.ServiceViewSet"],
                         [p["entry"]["id"] for p in rep["paths"]])
+
+
+    def test_callable_instance_view(self):
+        views = """\
+            import base64
+
+            from django.contrib.auth import authenticate
+            from django.http import HttpResponse
+
+
+            class CalendarFeed:
+                def __call__(self, request, *args, **kwargs):
+                    raw = base64.b64decode(request.META["HTTP_AUTHORIZATION"].split()[-1]).decode()
+                    name, _, pw = raw.partition(":")
+                    user = authenticate(request, username=name, password=pw)
+                    if user is None:
+                        return HttpResponse(status=401)
+                    request.user = user
+                    return HttpResponse("BEGIN:VCALENDAR")
+        """
+        urls = """\
+            from django.urls import path
+            from club.feeds import CalendarFeed
+            urlpatterns = [path("calendar.ics", CalendarFeed())]
+        """
+        rep = scan(project(self, {"conf/urls.py": urls, "club/feeds.py": views}, init=("conf", "club")))
+        self.assertIn(("calendar.ics", "club.feeds.CalendarFeed.__call__"),
+                      [(r["pattern"], r["target"]) for r in rep["routes"]])
+        c = [c for c in rep["candidates"] if c["candidate"]["group"] == "request_authenticator"]
+        self.assertEqual([x["entry"]["reached_from"] for x in c],
+                         [["route:calendar.ics|club.feeds.CalendarFeed.__call__"]])
 
 
 if __name__ == "__main__":

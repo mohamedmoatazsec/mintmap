@@ -1531,6 +1531,12 @@ class UrlConfParser:
                     decorators = decorators + [fq or _u(v.func)]
                 return self.handle_view(v.args[0], ctx, pattern, name, cond, chain, site, decorators, wrappers,
                                         helpers, seq, _depth + 1)
+            if fq and fq in self.p.classes and not v.keywords:
+                # (v6) an instance of a project class used as the view (`path("feed/", CalendarFeed())`): Django
+                # calls instance(request, ...), i.e. its __call__
+                r = self.p.lookup_method(fq, "__call__")
+                if r and r[0] == "project":
+                    return add("project_function", r[1])
             self._gap("unsupported_view_expr", smod, ptext, _u(v), line)
             return None
         if isinstance(v, (ast.Name, ast.Attribute)):
