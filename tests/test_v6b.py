@@ -21,6 +21,8 @@ written for these tests; no development-project code is copied.
     SameNamePackageTests       a package that holds a module of its own name (`plugin/plugin.py`) and a sub-package
                                named like a top-level one (`plugin/machine/` next to `machine/`) keeps its imports
                                (`from plugin.base.x import urls`) absolute
+    PropertyEdgeTests          reading a project @property / @cached_property on self runs its code: an owner
+                               lookup in a getter is on the path, and changing it changes the fingerprint
 """
 import json
 import unittest
@@ -529,6 +531,61 @@ class SameNamePackageTests(unittest.TestCase):
                          rep["coverage"]["gaps"])
         self.assertIn("api/plugin/keys/key/", [r["pattern"] for r in rep["routes"]])
         self.assertEqual(rep["coverage"]["module_aliases"], {})
+
+
+# ============================================================================ property reads are calls
+PROP_VIEWS = """\
+import secrets
+
+from django.shortcuts import get_object_or_404
+from django.utils.functional import cached_property
+from rest_framework import viewsets
+from rest_framework.response import Response
+
+from club.models import Crew, CrewKey
+
+
+class CrewKeyViewSet(viewsets.ViewSet):
+    @cached_property
+    def crew(self):
+        return get_object_or_404(Crew.objects.filter(members=self.request.user), pk=self.kwargs.get("crew"))
+
+    def create(self, request, crew=None):
+        key = CrewKey.objects.create(crew=self.crew, secret=secrets.token_hex(24))
+        return Response({"secret": key.secret})
+"""
+PROP_MODELS = """\
+from django.conf import settings
+from django.db import models
+
+
+class Crew(models.Model):
+    members = models.ManyToManyField(settings.AUTH_USER_MODEL)
+
+
+class CrewKey(models.Model):
+    crew = models.ForeignKey(Crew, on_delete=models.CASCADE)
+    secret = models.CharField(max_length=64)
+"""
+PROP_URLS = """\
+from django.urls import path
+from club.views import CrewKeyViewSet
+urlpatterns = [path("crews/<int:crew>/keys/", CrewKeyViewSet.as_view({"post": "create"}))]
+"""
+
+
+class PropertyEdgeTests(unittest.TestCase):
+    def test_getter_is_on_the_path(self):
+        root = project(self, {"conf/urls.py": PROP_URLS, "club/views.py": PROP_VIEWS, "club/models.py": PROP_MODELS},
+                       init=("conf", "club"))
+        rep = scan(root)
+        ps = [p for p in rep["paths"] if p["entry"]["id"].startswith("route:crews/")]
+        self.assertTrue(ps)
+        self.assertIn("club.views.CrewKeyViewSet.crew", ps[0]["fingerprint"]["callee_functions"] +
+                      ps[0]["fingerprint"]["path_functions"])
+        findings, code = run_diff(self, root, lambda: replace_in(
+            root, "club/views.py", "Crew.objects.filter(members=self.request.user)", "Crew.objects.all()"))
+        self.assertTrue(code & 4, findings)
 
 
 if __name__ == "__main__":

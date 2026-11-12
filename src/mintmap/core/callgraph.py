@@ -109,9 +109,36 @@ class CallGraph:
             elif isinstance(n, ast.Attribute) and isinstance(n.ctx, ast.Load) and isinstance(n.value, ast.Name):
                 if any(attr == n.attr for (_, attr) in self.catalog.property_mints):
                     out.append(CallSite(func_qn, n, n.lineno, _safe_unparse(n), n.attr, is_property=True))
+                elif n.value.id == "self" and info.cls and n.attr in self.project_properties(info.cls):
+                    # (v6) reading a project @property / @cached_property runs its code: an edge like
+                    # `self.team()` (the getter's checks and lookups are on the path and in its fingerprint)
+                    call = ast.Call(func=n, args=[], keywords=[])
+                    ast.copy_location(call, n)
+                    out.append(CallSite(func_qn, call, n.lineno, _safe_unparse(n), n.attr))
         out.sort(key=lambda s: (s.line, getattr(s.node, "col_offset", 0)))
         self._sites[func_qn] = out
         return out
+
+    PROPERTY_DECORATORS = ("property", "cached_property")
+
+    def project_properties(self, cls: str) -> set:
+        """(v6) names of @property / @cached_property getters defined by project classes in cls's MRO."""
+        memo = self.__dict__.setdefault("_prop_memo", {})
+        hit = memo.get(cls)
+        if hit is None:
+            hit = set()
+            for c in self.p.mro(cls):
+                ci = self.p.classes.get(c)
+                if ci is None:
+                    continue
+                for name, fq in ci.methods.items():
+                    fi = self.p.functions.get(fq)
+                    if fi is not None and any(
+                            (d.attr if isinstance(d, ast.Attribute) else getattr(d, "id", "")) in
+                            self.PROPERTY_DECORATORS for d in fi.node.decorator_list):
+                        hit.add(name)
+            memo[cls] = hit
+        return hit
 
     # ----------------------------------------------------------------- types
     def class_attr_type(self, ctx: str | None, attr: str) -> str | None:
