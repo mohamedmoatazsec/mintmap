@@ -561,6 +561,27 @@ class RequestAuthenticatorTests(unittest.TestCase):
                               "shop/views.py": view, "shop/users.py": "def get_anonymous_user():\n    return None\n"})
         self.assertFalse(cands(scan(root), "request_authenticator"))
 
+    def test_internal_request_objects_and_the_session_user_are_not_candidates(self):
+        view = textwrap.dedent("""\
+            from django.contrib.auth import get_user, get_user_model
+            from django.http import HttpRequest, HttpResponse
+
+
+            def replay(incoming):
+                request = HttpRequest()
+                request.user = get_user_model().objects.get(pk=incoming.POST["uid"])
+                return HttpResponse("ok")
+
+
+            def refresh(request):
+                request.user = get_user(request)
+                return HttpResponse("ok")
+            """)
+        root = project(self, {"conf/urls.py": "from django.urls import path\nfrom shop import views\n"
+                                              "urlpatterns = [path('r/', views.replay), path('f/', views.refresh)]\n",
+                              "shop/views.py": view})
+        self.assertFalse(cands(scan(root), "request_authenticator"))
+
     def test_channels_scope_user_and_its_helper(self):
         root = project(self, {"conf/urls.py": "urlpatterns = []\n", "conf/asgi.py": CHANNELS_ASGI,
                               "shop/realtime.py": CHANNELS_AUTH, "shop/models.py": PASS_MODEL})

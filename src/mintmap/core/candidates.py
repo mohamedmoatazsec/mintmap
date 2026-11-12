@@ -214,6 +214,11 @@ class CandidateFinder:
                     hit, text = n, f"{info.cls.rsplit('.', 1)[-1]}.{leaf}() returns {_short_src(n.value)}"
                     break
         elif ("user" in seen and "request" in seen) or "scope" in seen:
+            # (v6c) a request object the function builds itself (`request = HttpRequest()`, a request factory) is
+            # an internal call context (a task, a command, a test helper), not an incoming request
+            built = {n.targets[0].id for n in self.p.walk_function_body(info.node)
+                     if isinstance(n, ast.Assign) and len(n.targets) == 1 and isinstance(n.targets[0], ast.Name)
+                     and isinstance(n.value, ast.Call)}
             for n in self.p.walk_function_body(info.node):
                 if not isinstance(n, ast.Assign):
                     continue
@@ -225,7 +230,12 @@ class CandidateFinder:
                                                      (isinstance(t.value, ast.Attribute) and t.value.attr == "scope"))
                     if not (is_req or is_scope):
                         continue
+                    if is_req and isinstance(t.value, ast.Name) and t.value.id in built:
+                        continue
                     v = n.value
+                    if isinstance(v, ast.Call) and self.cred._resolve_static(info.module, v.func, info) in (
+                            "django.contrib.auth.get_user", "django.contrib.auth.aget_user"):
+                        continue      # Django's own session user (AuthenticationMiddleware's path covers it)
                     names = {x.id for x in ast.walk(v) if isinstance(x, ast.Name)} | \
                             {x.attr for x in ast.walk(v) if isinstance(x, ast.Attribute)}
                     if (isinstance(v, ast.Constant) and v.value is None) or names & self.NOT_A_USER or \
