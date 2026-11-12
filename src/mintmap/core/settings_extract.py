@@ -334,7 +334,7 @@ class _Evaluator:
         mod = getattr(self, "_cur_mod", None)
         if mod is None or len(getattr(self, "_ret_stack", ())) > 3:
             return None
-        q = self.p.resolve_expr_static(mod.name, e.func)
+        q = self.p.resolve_expr_static(mod.name, e.func, getattr(self, "_cur_func", None))
         q = self.p.canonical(q) if q else None
         info = self.p.functions.get(q or "")
         if info is None or info.cls or not isinstance(info.node, ast.FunctionDef):
@@ -769,10 +769,12 @@ class _Evaluator:
 
 
 def _single_return(fdef):
-    body = [st for st in fdef.body if not (isinstance(st, ast.Expr) and isinstance(st.value, ast.Constant))]
-    if len(body) == 1 and isinstance(body[0], ast.Return) and isinstance(body[0].value, (ast.Dict, ast.List,
-                                                                                          ast.Tuple)):
-        return body[0].value
+    """The literal a factory function ends with (`... return {...}`, only one return statement); statements
+    before it only bind locals, which stay unknown."""
+    returns = [n for n in ast.walk(fdef) if isinstance(n, ast.Return)]
+    last = fdef.body[-1] if fdef.body else None
+    if len(returns) == 1 and returns[0] is last and isinstance(last.value, (ast.Dict, ast.List, ast.Tuple)):
+        return last.value
     return None
 
 
@@ -935,6 +937,37 @@ def extract_settings(project: Project, prefixes) -> SettingsInfo:
                     merged[k] = merged[k] + [x for x in v if x not in merged[k]]
                 if _relevant(k, prefixes):
                     info.gaps.append(Gap("conflicting_setting", "-", k, "differs between settings modules"))
+    # (v6) settings changed at run time by project code outside the settings modules (`settings.X = ...` in
+    # AppConfig.ready() or a helper): the value is one more alternative, its statement is part of the setting's
+    # fingerprint, and a gap names it
+    fam = set(family) | set(chosen)
+    sites = []
+    for qn, finfo in sorted(project.functions.items()):
+        if finfo.module not in fam:
+            sites += [(project.modules[finfo.module], finfo, n) for n in project.walk_function_body(finfo.node)]
+    for mname in sorted(project.modules):
+        if mname not in fam:
+            sites += [(project.modules[mname], None, st)
+                      for st in project._top_level_statements(project.modules[mname].tree.body)]
+    for mod, finfo, n in sites:
+        if True:
+            mname = mod.name
+            if not (isinstance(n, ast.Assign) and len(n.targets) == 1 and isinstance(n.targets[0], ast.Attribute)):
+                continue
+            t = n.targets[0]
+            if not (t.attr.isupper() and _relevant(t.attr, prefixes)):
+                continue
+            q = project.resolve_expr_static(mname, t.value, finfo)
+            if not q or project.canonical(q) != "django.conf.settings":
+                continue
+            ev._cur_mod, ev._cur_func = mod, finfo
+            v = ev.ev(n.value, dict(merged))
+            ev._cur_func = None
+            merged[t.attr] = merge_alternative_values(merged[t.attr], v) if t.attr in merged else v
+            ev.record(t.attr, n)
+            ev.nodes.setdefault(t.attr, []).append(n)
+            info.gaps.append(Gap("setting_changed_at_run_time", mod.path, t.attr,
+                                 f"line {n.lineno}: {_unparse(n)[:120]}"))
     info.values = merged
     info.stmts = ev.stmts
     info.nodes = ev.nodes

@@ -618,6 +618,45 @@ class SettingsFactoryTests(unittest.TestCase):
         self.assertTrue(any("BasicAuthentication" in f["message"] for f in findings), findings)
 
 
+class RunTimeSettingsTests(unittest.TestCase):
+    def test_setting_assigned_in_app_ready_binds_the_library_hook(self):
+        files = {"conf/urls.py": """\
+                    from django.urls import include, path
+                    urlpatterns = [path("o/", include("oauth2_provider.urls"))]
+                 """, "club/apps.py": """\
+                    from django.apps import AppConfig
+                    from django.conf import settings
+
+
+                    class ClubConfig(AppConfig):
+                        name = "club"
+
+                        def ready(self):
+                            from club.provider import provider_settings
+                            settings.OAUTH2_PROVIDER = {**provider_settings(), **getattr(settings, "X", {})}
+                 """, "club/provider.py": """\
+                    def provider_settings():
+                        scopes = {"openid": "id"}
+                        return {"OAUTH2_VALIDATOR_CLASS": "club.validator.ClubValidator", "SCOPES": scopes}
+                 """, "club/validator.py": """\
+                    from oauth2_provider.oauth2_validators import OAuth2Validator
+
+
+                    class ClubValidator(OAuth2Validator):
+                        def validate_refresh_token(self, refresh_token, client, request, *args, **kwargs):
+                            if not request.user.is_active:
+                                return False
+                            return super().validate_refresh_token(refresh_token, client, request, *args, **kwargs)
+                 """}
+        settings = 'INSTALLED_APPS = ["django.contrib.auth", "oauth2_provider", "club"]\n'
+        root = project(self, files, init=("conf", "club"), settings_extra=settings)
+        rep = scan(root)
+        self.assertTrue(gaps(rep, "setting_changed_at_run_time"))
+        findings, code = run_diff(self, root, lambda: replace_in(
+            root, "club/validator.py", "        if not request.user.is_active:\n            return False\n", ""))
+        self.assertTrue(code & 4, findings)
+
+
 # ============================================================================ unregistered minting subclasses
 class MintingSubclassTests(unittest.TestCase):
     def test_subclass_nobody_registers_is_a_candidate_and_fingerprinted(self):
