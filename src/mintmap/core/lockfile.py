@@ -281,6 +281,14 @@ def diff(lock: dict, report: dict) -> tuple[list, int]:
     for pid in sorted(set(cur) & set(old)):
         o, n = old[pid], cur[pid]
         changed = False
+        ogot = set((o.get("entry_point") or {}).get("reached_from") or [])
+        ngot = set((n.get("entry_point") or {}).get("reached_from") or [])
+        if ngot - ogot and (n.get("entry_point") or {}).get("kind") == "heuristic_site":
+            # (v6c) a grouped heuristic site reached from a new entry point is a new way to obtain the credential
+            add(NEW_PATH, pid, f"new entry point(s) reach the grouped site {n['mint_site']['api']} at "
+                               f"{(n['mint_site'].get('site') or {}).get('function')}: "
+                               f"{_cut(', '.join(sorted(ngot - ogot)), 300)}")
+            changed = True
         if o["fingerprint"]["overall"] != n["fingerprint"]["overall"]:
             comps = sorted(k for k in n["fingerprint"]["components"]
                            if o["fingerprint"]["components"].get(k) != n["fingerprint"]["components"][k])

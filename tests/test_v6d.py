@@ -38,6 +38,19 @@ written for these tests; no development-project code is copied.
                               session values that load a non-principal object, generators nothing references) is
                               watched: one low-ranked lock entry per rule (`watched:<kind>`), fingerprinted by the
                               site function and its entry points, diffed like candidates, accepted per group
+    CustomManagerTests        `Model.objects.issue()` resolves to the project manager / queryset method
+                              (`objects = M()`, `QS.as_manager()`, `Manager.from_queryset(QS)()`); `self.create(...)`
+                              and `self.model(...)` in a manager create that model
+    AuthHooksGroupTests       `settings:AUTH_HOOKS(project code)`: callables named by auth-named settings, receivers of
+                              authentication-library signals and predicates registered with permission registries
+    RoutingVisibilityTests    a URL list filled by a decorator at run time is a gap; class-based settings
+                              (django-configurations) are read; unrouted paths are not ranked below routed ones
+    MiddlewareConditionTests  the SECRET_KEY_FALLBACKS re-hash branch is a path only with fallbacks configured
+    GroupedSiteTests          a new entry point reaching a grouped heuristic site is a NEW_PATH that names it
+    NameFallbackTests         up to six project definitions of a method called on an untyped receiver are hashed;
+                              more mark the fingerprint incomplete
+    ExtractRefactorTests      moving the mint call into an inlined helper keeps the path; extract method in a class
+                              named by a hook setting keeps the hook fingerprint
 """
 import json
 import textwrap
@@ -1324,6 +1337,403 @@ class WatchedTierTests(unittest.TestCase):
         self.assertEqual(sorted(g["id"] for g in lock["watched"]), ["watched:random_value", "watched:signed_value"])
         r = cli("accept", root, "--group", "watched:signed_value", "--reviewer", "alice")
         self.assertEqual(r.returncode, 0, r.stderr)
+
+
+# ============================================================================ custom managers
+MGR_MODELS = """\
+import secrets
+
+from django.contrib.auth.base_user import AbstractBaseUser, BaseUserManager
+from django.db import models
+from django.utils import timezone
+
+
+class Member(AbstractBaseUser):
+    email = models.EmailField(unique=True)
+    is_superuser = models.BooleanField(default=False)
+    USERNAME_FIELD = "email"
+    objects = None
+
+
+class MemberManager(BaseUserManager):
+    def create_user(self, email, password=None, **extra):
+        member = self.model(email=self.normalize_email(email), **extra)
+        member.set_password(password)
+        member.save()
+        return member
+
+
+Member.add_to_class("objects", MemberManager())
+
+
+class KeyManager(models.Manager):
+    def issue(self, owner, label):
+        return self.create(owner=owner, label=label, secret=secrets.token_hex(24))
+
+
+class ApiKey(models.Model):
+    owner = models.ForeignKey("auth.User", on_delete=models.CASCADE)
+    label = models.CharField(max_length=40)
+    secret = models.CharField(max_length=64)
+    objects = KeyManager()
+
+
+class LinkQuerySet(models.QuerySet):
+    def usable(self):
+        return self.filter(used=False, expires__gt=timezone.now())
+
+
+class EntryLink(models.Model):
+    owner = models.ForeignKey("auth.User", on_delete=models.CASCADE)
+    code = models.CharField(max_length=64)
+    used = models.BooleanField(default=False)
+    expires = models.DateTimeField()
+    objects = LinkQuerySet.as_manager()
+"""
+MGR_VIEWS = """\
+from django.contrib.auth import login
+from django.http import HttpResponse, JsonResponse
+
+from shop.models import ApiKey, EntryLink
+
+
+def new_key(request):
+    key = ApiKey.objects.issue(request.user, request.POST["label"])
+    return JsonResponse({"key": key.secret})
+
+
+def enter(request):
+    link = EntryLink.objects.usable().filter(code=request.GET["c"]).first()
+    if link is None:
+        return HttpResponse(status=403)
+    login(request, link.owner, backend="django.contrib.auth.backends.ModelBackend")
+    return HttpResponse("in")
+"""
+MGR_URLS = """\
+from django.urls import path
+from shop import views
+urlpatterns = [path("keys/", views.new_key), path("enter/", views.enter)]
+"""
+
+
+class CustomManagerTests(unittest.TestCase):
+    def mgr_project(self):
+        return project(self, {"conf/urls.py": MGR_URLS, "shop/models.py": MGR_MODELS, "shop/views.py": MGR_VIEWS})
+
+    def test_manager_method_minting_a_token_is_routed(self):
+        rep = scan(self.mgr_project())
+        ps = [p for p in rep["paths"] if p["entry"]["id"].startswith("route:keys/")]
+        self.assertEqual(len(ps), 1, [p["entry"]["id"] for p in rep["paths"]])
+        self.assertIn("shop.models.KeyManager.issue", ps[0]["chain"])
+
+    def test_weakened_manager_generator_is_a_finding(self):
+        root = self.mgr_project()
+        findings, code = run_diff(self, root, lambda: replace_in(root, "shop/models.py", "secrets.token_hex(24)",
+                                                                 "str(owner.pk)"))
+        self.assertTrue(code, findings)
+
+    def test_queryset_check_on_a_login_path_is_fingerprinted(self):
+        root = self.mgr_project()
+        findings, code = run_diff(self, root, lambda: replace_in(
+            root, "shop/models.py", "return self.filter(used=False, expires__gt=timezone.now())", "return self.all()"))
+        self.assertTrue(code & 4, findings)
+
+    def test_from_queryset_manager(self):
+        models = MGR_MODELS.replace("objects = LinkQuerySet.as_manager()",
+                                    "objects = models.Manager.from_queryset(LinkQuerySet)()")
+        root = project(self, {"conf/urls.py": MGR_URLS, "shop/models.py": models, "shop/views.py": MGR_VIEWS})
+        findings, code = run_diff(self, root, lambda: replace_in(
+            root, "shop/models.py", "return self.filter(used=False, expires__gt=timezone.now())", "return self.all()"))
+        self.assertTrue(code & 4, findings)
+
+
+# ============================================================================ AUTH_HOOKS settings group
+HOOK_FILES = {
+    "conf/urls.py": "urlpatterns = []\n",
+    "shop/perms.py": "def may_impersonate(request, target):\n    return request.user.is_superuser and "
+                     "not target.is_superuser\n",
+    "shop/signals.py": textwrap.dedent("""\
+        from django.dispatch import receiver
+        from directory_auth.backend import user_synced
+
+
+        @receiver(user_synced)
+        def grant_flags(sender, user=None, entry=None, **kwargs):
+            user.is_staff = "ops" in entry.groups
+        """),
+    "shop/rules.py": textwrap.dedent("""\
+        import rulebook
+
+
+        @rulebook.predicate
+        def is_owner(user, obj):
+            return obj is not None and obj.owner_id == user.pk
+
+
+        rulebook.add_perm("shop.rotate_key", is_owner)
+        """),
+}
+
+
+class AuthHooksGroupTests(unittest.TestCase):
+    def hooks_project(self):
+        return project(self, HOOK_FILES, settings_extra='IMPERSONATE_PERMISSION_CHECK = "shop.perms.may_impersonate"\n'
+                                                       'CACHE_TIMEOUT_HELPER = "shop.perms.may_impersonate"\n')
+
+    def test_group_lists_the_three_kinds_of_hooks(self):
+        rep = scan(self.hooks_project())
+        grp = [g for g in rep["settings_groups"] if g["id"] == "settings:AUTH_HOOKS(project code)"]
+        self.assertEqual(len(grp), 1)
+        self.assertEqual(sorted(grp[0]["fingerprint"]["sources"]),
+                         ["shop.perms.may_impersonate", "shop.rules.is_owner", "shop.signals.grant_flags"])
+
+    def test_each_hook_change_is_a_finding(self):
+        for rel, old, new in (("shop/perms.py", "and not target.is_superuser", ""),
+                              ("shop/signals.py", '"ops" in entry.groups', "True"),
+                              ("shop/rules.py", "obj is not None and obj.owner_id == user.pk", "True")):
+            with self.subTest(rel=rel):
+                root = self.hooks_project()
+                findings, code = run_diff(self, root, lambda: replace_in(root, rel, old, new))
+                self.assertEqual(code, 4, findings)
+                self.assertIn("AUTH_HOOKS", findings[0]["path_id"])
+
+
+# ============================================================================ routing visibility
+REG_URLS = "from shop import views  # noqa: F401\nfrom shop.registry import ROUTES\n\nurlpatterns = list(ROUTES)\n"
+REG = textwrap.dedent("""\
+    from django.urls import path
+
+    ROUTES = []
+
+
+    def page(pattern):
+        def deco(fn):
+            ROUTES.append(path(pattern, fn))
+            return fn
+        return deco
+    """)
+REG_VIEWS = textwrap.dedent("""\
+    from django.contrib.auth import authenticate, login
+    from django.http import HttpResponse
+
+    from shop.registry import page
+
+
+    @page("in/")
+    def sign_in(request):
+        user = authenticate(request, username=request.POST["u"], password=request.POST["p"])
+        if user is None:
+            return HttpResponse(status=403)
+        login(request, user)
+        return HttpResponse("ok")
+    """)
+CLASS_SETTINGS = textwrap.dedent("""\
+    from configurations import Configuration
+
+
+    class Common(Configuration):
+        SECRET_KEY = "fixture-only"
+        ROOT_URLCONF = "conf.urls"
+        INSTALLED_APPS = ["django.contrib.auth", "django.contrib.sessions", "shop"]
+        MIDDLEWARE = ["django.contrib.sessions.middleware.SessionMiddleware",
+                      "django.contrib.auth.middleware.AuthenticationMiddleware", "shop.middleware.HeaderLogin"]
+
+
+    class Production(Common):
+        DEBUG = False
+
+
+    class Staging(Common):
+        DEBUG = True
+    """)
+HEADER_MW = textwrap.dedent("""\
+    from django.contrib.auth import authenticate, login
+
+
+    class HeaderLogin:
+        def __init__(self, get_response):
+            self.get_response = get_response
+
+        def __call__(self, request):
+            who = request.headers.get("X-User")
+            if who:
+                user = authenticate(request, remote_user=who)
+                if user is not None:
+                    login(request, user)
+            return self.get_response(request)
+    """)
+
+
+class RoutingVisibilityTests(unittest.TestCase):
+    def test_decorator_registry_is_a_gap_and_the_login_is_not_low(self):
+        rep = scan(project(self, {"conf/urls.py": REG_URLS, "shop/registry.py": REG, "shop/views.py": REG_VIEWS}))
+        self.assertTrue(gaps(rep, "url_list_filled_at_run_time"))
+        p = [p for p in rep["paths"] if p["mint"]["api"] == "django.contrib.auth.login"]
+        self.assertEqual(p[0]["entry"]["kind"], "unrouted")
+        self.assertNotEqual(p[0]["review"]["risk"], "low")
+
+    def test_class_based_settings_are_read(self):
+        rep = scan(project(self, {"conf/urls.py": "urlpatterns = []\n", "shop/middleware.py": HEADER_MW},
+                           settings=CLASS_SETTINGS))
+        self.assertTrue([p for p in rep["paths"] if p["entry"]["id"] == "middleware:shop.middleware.HeaderLogin"])
+        self.assertFalse([g for g in gaps(rep, "missing_setting") if g["where"] == "MIDDLEWARE"])
+
+
+# ============================================================================ middleware flows switched off by settings
+class MiddlewareConditionTests(unittest.TestCase):
+    FALLBACK = "django.contrib.auth.get_user (SECRET_KEY_FALLBACKS re-hash branch)"
+
+    def run_with(self, extra):
+        settings = textwrap.dedent("""\
+            SECRET_KEY = "fixture-only"
+            INSTALLED_APPS = ["django.contrib.auth", "django.contrib.sessions", "shop"]
+            MIDDLEWARE = ["django.contrib.sessions.middleware.SessionMiddleware",
+                          "django.contrib.auth.middleware.AuthenticationMiddleware"]
+            ROOT_URLCONF = "conf.urls"
+            """) + extra
+        return project(self, {"conf/urls.py": "urlpatterns = []\n"}, settings=settings)
+
+    def test_rehash_branch_needs_fallbacks(self):
+        rep = scan(self.run_with(""))
+        self.assertFalse(flow_paths(rep, self.FALLBACK))
+        self.assertTrue(disabled(rep, self.FALLBACK))
+        root = self.run_with("")
+        findings, code = run_diff(self, root, lambda: replace_in(root, "conf/settings.py", 'ROOT_URLCONF',
+                                                                 'SECRET_KEY_FALLBACKS = ["old"]\nROOT_URLCONF'))
+        self.assertTrue(code & 1, findings)
+
+
+# ============================================================================ grouped heuristic sites
+class GroupedSiteTests(unittest.TestCase):
+    def test_new_entry_point_is_a_new_path(self):
+        helper = textwrap.dedent("""\
+            import secrets
+
+            from shop.models import Pass
+
+
+            def give_pass(user):
+                return Pass.objects.create(holder=user, token=secrets.token_urlsafe(32))
+            """)
+        views = "from django.http import HttpResponse\n\nfrom shop.passes import give_pass\n\n\n" + "".join(
+            f"def v{i}(request):\n    give_pass(request.user)\n    return HttpResponse('ok')\n\n\n"
+            for i in range(4))
+        urls = "from django.urls import path\nfrom shop import views\nurlpatterns = [" + ", ".join(
+            f"path('p{i}/', views.v{i})" for i in range(3)) + "]\n"
+        root = project(self, {"conf/urls.py": urls, "shop/passes.py": helper, "shop/views.py": views,
+                              "shop/models.py": PASS_MODEL.replace("code = models.CharField(max_length=64)",
+                                                                   "token = models.CharField(max_length=64)")})
+        findings, code = run_diff(self, root, lambda: replace_in(root, "conf/urls.py", "path('p2/', views.v2)]",
+                                                                 "path('p2/', views.v2), path('p3/', views.v3)]"))
+        self.assertTrue(code & 1, findings)
+        self.assertIn("route:p3/", " ".join(f["message"] for f in findings if f["kind"] == "new_path"))
+
+
+# ============================================================================ name fallback
+def registry_project(tc, n):
+    backends = "from django.contrib.auth import get_user_model\n\n\n" + "".join(
+        f"class B{i}:\n    def check_entry(self, request, data):\n"
+        f"        user = get_user_model().objects.filter(email=data['e']).first()\n"
+        f"        if user is not None and user.check_password(data['p'] + '{i}'):\n"
+        f"            return user\n        return None\n\n\n" for i in range(n))
+    backends += "def pick(request):\n    return [" + ", ".join(f"B{i}" for i in range(n)) + \
+                "][int(request.POST['b'])]()\n"
+    views = textwrap.dedent("""\
+        from django.contrib.auth import login
+        from django.http import HttpResponse
+
+        from shop.backends import pick
+
+
+        def sign_in(request):
+            user = pick(request).check_entry(request, request.POST)
+            if user is None:
+                return HttpResponse(status=403)
+            login(request, user)
+            return HttpResponse("ok")
+        """)
+    return project(tc, {"conf/urls.py": "from django.urls import path\nfrom shop.views import sign_in\n"
+                                        "urlpatterns = [path('in/', sign_in)]\n",
+                        "shop/backends.py": backends, "shop/views.py": views})
+
+
+class NameFallbackTests(unittest.TestCase):
+    def test_four_definitions_are_hashed(self):
+        root = registry_project(self, 4)
+        findings, code = run_diff(self, root, lambda: replace_in(
+            root, "shop/backends.py", "user.check_password(data['p'] + '3')", "True"))
+        self.assertTrue(code & 4, findings)
+
+    def test_more_than_the_limit_marks_the_fingerprint_incomplete(self):
+        rep = scan(registry_project(self, 8))
+        p = [p for p in rep["paths"] if p["entry"]["id"].startswith("route:in/")][0]
+        self.assertFalse(p["fingerprint_complete"])
+        self.assertTrue([g for g in p["gaps"] if g.startswith("fingerprint_name_fallback_limit|")])
+
+
+# ============================================================================ extract refactors
+class ExtractRefactorTests(unittest.TestCase):
+    def test_mint_moved_into_a_private_method_or_module_helper(self):
+        views = textwrap.dedent("""\
+            import secrets
+
+            from django.http import JsonResponse
+            from django.views import View
+
+            from shop.models import Pass
+
+
+            class Issue(View):
+                def post(self, request):
+                    p = Pass.objects.create(holder=request.user, token=secrets.token_urlsafe(32))
+                    return JsonResponse({"t": p.token})
+            """)
+        model = PASS_MODEL.replace("code = models.CharField(max_length=64)", "token = models.CharField(max_length=64)")
+        urls = "from django.urls import path\nfrom shop.views import Issue\nurlpatterns = [path('i/', Issue.as_view())]\n"
+        for name, edit in (
+                ("method", lambda t: t.replace(
+                    "        p = Pass.objects.create(holder=request.user, token=secrets.token_urlsafe(32))\n",
+                    "        p = self._make(request.user)\n").replace(
+                    "    def post(self, request):",
+                    "    def _make(self, holder):\n        return Pass.objects.create(holder=holder, "
+                    "token=secrets.token_urlsafe(32))\n\n    def post(self, request):")),
+                ("module", lambda t: t.replace(
+                    "        p = Pass.objects.create(holder=request.user, token=secrets.token_urlsafe(32))\n",
+                    "        p = _make(request.user)\n").replace(
+                    "class Issue(View):", "def _make(holder):\n    return Pass.objects.create(holder=holder, "
+                                          "token=secrets.token_urlsafe(32))\n\n\nclass Issue(View):"))):
+            with self.subTest(name=name):
+                root = project(self, {"conf/urls.py": urls, "shop/views.py": views, "shop/models.py": model})
+                findings, code = run_diff(self, root, lambda: write(root, "shop/views.py",
+                                                                    edit(read(root, "shop/views.py"))))
+                self.assertEqual(code, 0, findings)
+
+    def test_extract_method_in_a_hook_class(self):
+        validator = textwrap.dedent("""\
+            from django.contrib.auth import authenticate
+            from oauth2_provider.oauth2_validators import OAuth2Validator
+
+
+            class OrgValidator(OAuth2Validator):
+                def validate_user(self, username, password, client, request, *args, **kwargs):
+                    who = authenticate(request=request, username=username, password=password)
+                    if who is not None and who.is_active and who.org_id == client.org_id:
+                        request.user = who
+                        return True
+                    return False
+            """)
+        settings_extra = 'OAUTH2_PROVIDER = {"OAUTH2_VALIDATOR_CLASS": "shop.validators.OrgValidator"}\n'
+        urls = "from django.urls import include, path\nurlpatterns = [path('o/', include('oauth2_provider.urls'))]\n"
+        root = project(self, {"conf/urls.py": urls, "shop/validators.py": validator}, settings_extra=settings_extra)
+
+        def mutate():
+            t = read(root, "shop/validators.py").replace(
+                "if who is not None and who.is_active and who.org_id == client.org_id:",
+                "if who is not None and self._same_org(who, client):")
+            write(root, "shop/validators.py", t + "\n    def _same_org(self, who, client):\n"
+                                                  "        return who.is_active and who.org_id == client.org_id\n")
+        findings, code = run_diff(self, root, mutate)
+        self.assertEqual(code, 0, findings)
 
 
 if __name__ == "__main__":

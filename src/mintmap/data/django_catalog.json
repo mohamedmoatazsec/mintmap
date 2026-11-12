@@ -2936,6 +2936,22 @@
     "evidence": "every allauth app setting is read through allauth.utils.get_setting(), which calls the project callable named by ALLAUTH_SETTING_GETTER when that setting exists: the project then decides every value at run time",
     "added_in": "v6c"
    }
+  },
+  {
+   "mint_refs": [
+    "django.contrib.auth.get_user (SECRET_KEY_FALLBACKS re-hash branch)"
+   ],
+   "enabled_if_any": [
+    {
+     "setting": "SECRET_KEY_FALLBACKS",
+     "default": [],
+     "when": "truthy"
+    }
+   ],
+   "source_location": "django/contrib/auth/__init__.py:309-314,350-355; django/contrib/auth/base_user.py:138-140; django/conf/global_settings.py:283",
+   "evidence": "the re-hash branch of get_user()/aget_user() runs only when the stored session hash matches a fallback hash; get_session_auth_fallback_hash() yields one hash per SECRET_KEY_FALLBACKS entry, and the setting defaults to an empty list, so without fallbacks the branch cannot run",
+   "verified_version": "Django 6.1.2",
+   "added_in": "v6c"
   }
  ],
  "library_flow_conditions_note": "(v6) A catalogued library flow whose enabling condition is statically false in the project's settings (every settings module and branch evaluated, the setting absent -> the library default) is not a path; it is listed in coverage.library_flows_disabled_by_settings, and enabling it later is a new path. Unknown values keep the flow. Rows with `include` apply only to that URLconf include. (v6c) `settings_read_through`: a setting that, when the project sets it, routes every read of the row's settings through project code (allauth's ALLAUTH_SETTING_GETTER); the row's setting conditions are then unknown and the flow is kept."

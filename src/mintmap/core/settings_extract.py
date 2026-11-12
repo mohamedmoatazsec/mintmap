@@ -198,6 +198,21 @@ def _namespace_writes(tree) -> list:
     return uniq
 
 
+def _settings_classes(tree) -> list:
+    """(v6c) Module-level classes that hold settings as upper-case class attributes (at least one of the markers
+    ROOT_URLCONF / MIDDLEWARE / INSTALLED_APPS in the module's classes): django-configurations and similar."""
+    classes = [st for st in tree.body if isinstance(st, ast.ClassDef)]
+    marked = False
+    out = []
+    for c in classes:
+        names = {t.id for st in c.body if isinstance(st, ast.Assign) for t in st.targets if isinstance(t, ast.Name)}
+        if any(n.isupper() for n in names):
+            out.append(c)
+        if names & SETTINGS_MARKERS:
+            marked = True
+    return out if marked else []
+
+
 def _mentions_sys_modules(e) -> bool:
     return any(isinstance(x, ast.Attribute) and x.attr == "modules" and isinstance(x.value, ast.Name) and
                x.value.id == "sys" for x in ast.walk(e))
@@ -481,6 +496,7 @@ class _Evaluator:
                                  f"{text}: writes the settings module's namespace at run time; it may assign any "
                                  f"setting", line))
         self.run_block(mod, mod.tree.body, env, _stack + (modname,))
+        self.class_settings(mod, env)
         for line, text, keys in known_writes:
             for k in sorted(keys):
                 if k.isupper():
@@ -494,6 +510,42 @@ class _Evaluator:
                 self.gaps.append(Gap("settings_function_not_evaluated", mod.path, fname,
                                      "changes " + ", ".join(sorted(touched)) + "; no module-level call found"))
         return env
+
+    def class_settings(self, mod, env):
+        """(v6c) Class-based settings (django-configurations: `class Prod(Base(Configuration)): MIDDLEWARE = [...]`):
+        each class that no other class of the module derives from is a possible configuration (chosen at run time
+        by DJANGO_CONFIGURATION); its upper-case attributes, inherited along the module's class chain, are
+        evaluated and the classes merged as alternatives."""
+        classes = _settings_classes(mod.tree)
+        if not classes:
+            return
+        by_name = {c.name: c for c in classes}
+        bases_used = {b.id for c in classes for b in c.bases if isinstance(b, ast.Name) and b.id in by_name}
+        leaves = [c for c in classes if c.name not in bases_used]
+        merged: dict = {}
+        for leaf in leaves:
+            chain, cur = [], leaf
+            while cur is not None and cur not in chain:
+                chain.append(cur)
+                nxt = [by_name[b.id] for b in cur.bases if isinstance(b, ast.Name) and b.id in by_name]
+                cur = nxt[0] if nxt else None
+            cenv = dict(env)
+            for c in reversed(chain):
+                for st in c.body:
+                    if isinstance(st, (ast.Assign, ast.AnnAssign)) and st.value is not None:
+                        tgts = st.targets if isinstance(st, ast.Assign) else [st.target]
+                        for t in tgts:
+                            if isinstance(t, ast.Name) and t.id.isupper():
+                                cenv[t.id] = self.ev(st.value, cenv)
+                                self.record(t.id, st)
+            for k, v in cenv.items():
+                if k.isupper() and (k not in env or env[k] is not v):
+                    merged[k] = merge_alternative_values(merged[k], v) if k in merged else v
+        env.update(merged)
+        if len(leaves) > 1:
+            self.gaps.append(Gap("settings_module_ambiguous", mod.path, "DJANGO_CONFIGURATION",
+                                 "class-based settings; every configuration class is analysed as an alternative: " +
+                                 ",".join(c.name for c in leaves)))
 
     def _dict_keys(self, e, modname, depth=0):
         """(v6c) The constant string keys of a dict expression: a literal (with `**` of such dicts), or a call
@@ -1043,7 +1095,7 @@ def extract_settings(project: Project, prefixes) -> SettingsInfo:
         for st in project._top_level_statements(mod.tree.body):
             if isinstance(st, ast.Assign):
                 names |= {t.id for t in st.targets if isinstance(t, ast.Name)}
-        if names & SETTINGS_MARKERS:
+        if names & SETTINGS_MARKERS or _settings_classes(mod.tree):
             candidates.append(mod.name)
     leaves, family = _settings_family(project, candidates)
     dsm = _dsm_literals(project)

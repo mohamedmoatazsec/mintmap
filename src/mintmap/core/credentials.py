@@ -603,6 +603,20 @@ class CredentialHeuristics:
         q = self._resolve_static(info.module, f, info)
         if q and q in self.p.classes and self.is_model(q):
             return q, "constructor"
+        mgr = ctx or info.cls
+        models = self.cg.manager_models().get(mgr, []) if mgr else []
+        if len(models) == 1 and isinstance(f, ast.Attribute):
+            # (v6c) inside a project manager / queryset: `self.create(...)`, `self.get_queryset().create(...)`,
+            # `self.model(...)` create the model that declares it
+            base = f.value
+            if isinstance(base, ast.Call) and isinstance(base.func, ast.Attribute) and \
+                    base.func.attr in ("get_queryset", "all", "filter", "using") and \
+                    isinstance(base.func.value, ast.Name) and base.func.value.id == "self":
+                base = base.func.value
+            if isinstance(base, ast.Name) and base.id == "self" and f.attr in CREATE_METHODS:
+                return models[0], f.attr
+            if isinstance(base, ast.Name) and base.id == "self" and f.attr == "model":
+                return models[0], "constructor"
         model, how = self._related_creation(f, info)
         if model:
             return model, how

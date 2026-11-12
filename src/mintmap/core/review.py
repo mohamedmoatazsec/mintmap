@@ -19,7 +19,8 @@ Credential kinds (`kind:<k>`), from the minted credential's purpose:
 Risk is a transparent score (shown in `why`): the credential kind (session 3, token 2, precursor / custom 1), the
 check evidence (no check found or a check whose result is not enforced +3, an unrecognized or unverified check +2,
 a check whose relation to the mint is unproven or a library flow whose checks are not analysed +1, a route shadowed
-by an earlier pattern -3), reachability (a route, middleware or authentication class +1; unrouted 0) and confidence
+by an earlier pattern -3), reachability (a route, middleware or authentication class +1; (v6c) unrouted +1 as well:
+a route MintMap could not see is the common case on unfamiliar code) and confidence
 (a heuristic credential -1; incomplete analysis of project code +1).  high >= 6, medium >= 4, low otherwise.
 """
 from __future__ import annotations
@@ -85,7 +86,11 @@ def path_review(p: dict) -> dict:
     if st == "shadowed_by_earlier_route":
         pass                       # already said: not reachable through its route
     elif ek == "unrouted":
-        why.append("no route, middleware or authentication class reaches it (unrouted)")
+        # (v6c) scored like a reachable path: on unfamiliar code a missing route is more often MintMap failing to
+        # see it (a route registry, class-based settings) than code that never runs
+        score += 1
+        why.append("MintMap found no route, middleware or authentication class reaching it (unrouted): it may "
+                   "still be reachable (review as reachable)")
     else:
         score += 1
         n = len(p["entry"].get("reached_from") or []) if ek == "heuristic_site" else 1

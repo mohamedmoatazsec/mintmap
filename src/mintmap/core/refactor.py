@@ -306,7 +306,11 @@ class Inliner:
         info = self.p.functions[qn]
         if not self._may_inline(info):
             # fast path: no call of an eligible helper and no bool() to simplify: the plain normalised dump
-            out = (normalize(info.node), frozenset(), info.node, frozenset())
+            node = info.node
+            if _has_nested_boolop(node):
+                node = copy.deepcopy(node)
+                _flatten_boolops(node)
+            out = (normalize(node), frozenset(), node, frozenset())
             self._fn[qn] = out
             return out
         memo: dict = {}
@@ -316,6 +320,7 @@ class Inliner:
                   orig_of=orig_of, bodies=set(), receiver=self._receiver(info))
         self._rewrite_lists(tree, st, depth=0, stack=(qn,))
         self._peephole_bool(tree, info)
+        _flatten_boolops(tree)
         # keep the transformed tree before dumping (dump_normalized renames in place: dump a copy)
         keep = copy.deepcopy(tree)
         out = (dump_normalized(tree), frozenset(st["inlined"]), keep, frozenset(st["bodies"]))
@@ -524,6 +529,28 @@ class Inliner:
                 n.operand = strip(n.operand)
             elif isinstance(n, ast.comprehension):
                 n.ifs = [strip(x) for x in n.ifs]
+
+
+def _has_nested_boolop(tree) -> bool:
+    return any(isinstance(n, ast.BoolOp) and any(isinstance(v, ast.BoolOp) and type(v.op) is type(n.op)
+                                                 for v in n.values) for n in ast.walk(tree))
+
+
+def _flatten_boolops(tree):
+    """(v6c) `a and (b and c)` -> `a and b and c` (same operator; `and` / `or` are associative, short-circuit order
+    unchanged): an inlined condition helper (`x and self._ok(y)` with `_ok` returning `b and c`) then dumps like the
+    original flat condition."""
+    for n in ast.walk(tree):
+        if isinstance(n, ast.BoolOp):
+            flat = []
+            stack = list(reversed(n.values))
+            while stack:
+                v = stack.pop()
+                if isinstance(v, ast.BoolOp) and type(v.op) is type(n.op):
+                    stack.extend(reversed(v.values))
+                else:
+                    flat.append(v)
+            n.values = flat
 
 
 def _dotted(e):

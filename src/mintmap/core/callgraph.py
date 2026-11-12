@@ -378,6 +378,17 @@ class CallGraph:
                     return self.class_attr_type(ctx, "form_class")
             q = self.p.resolve_expr_static(info.module, f, info)
             q = self.p.canonical(q) if q else None
+            if q and isinstance(f, ast.Attribute):
+                # (v6c) `Model.objects.usable()` / `.filter(...)` returns the project queryset class
+                mod_, rest = self.p.module_prefix(q)
+                if mod_ is not None and len(rest) == 3 and f"{mod_}.{rest[0]}" in self.p.classes:
+                    mcs = self.manager_classes(f"{mod_}.{rest[0]}", rest[1])
+                    if mcs:
+                        return mcs[0]
+            if isinstance(f, ast.Attribute) and isinstance(f.value, ast.Call):
+                inner = self.expr_type(f.value, info, ctx, types)
+                if inner in self.p.classes and inner in self.manager_models():
+                    return inner         # a chained queryset call keeps the project queryset type
             if q:
                 mint = self.catalog.mint_calls.get(q)
                 if mint and mint.returns:
@@ -388,6 +399,59 @@ class CallGraph:
                     return q
             return None
         return None
+
+    def manager_classes(self, model: str, attr: str) -> list:
+        """(v6c) Project manager / queryset classes behind `model.<attr>` (a class attribute of the model or a
+        project base): `objects = AccountManager()`, `objects = LinkQuerySet.as_manager()`,
+        `objects = BaseManager.from_queryset(LinkQuerySet)()` (queryset first, then the manager)."""
+        memo = self.__dict__.setdefault("_mgr_memo", {})
+        key = (model, attr)
+        if key in memo:
+            return memo[key]
+        memo[key] = []
+        out = []
+        for c in self.p.mro(model):
+            ci = self.p.classes.get(c)
+            if ci is None or attr not in ci.attrs:
+                continue
+            v = ci.attrs[attr]
+            if not isinstance(v, ast.Call):
+                break
+            mod = ci.module
+
+            def cls_of(e):
+                if isinstance(e, (ast.Name, ast.Attribute)):
+                    q = self.p.resolve_expr_static(mod, e)
+                    q = self.p.canonical(q) if q else None
+                    return q if q in self.p.classes else None
+                return None
+            f = v.func
+            if isinstance(f, ast.Attribute) and f.attr == "as_manager":
+                out += [x for x in [cls_of(f.value)] if x]
+            elif isinstance(f, ast.Call) and isinstance(f.func, ast.Attribute) and f.func.attr == "from_queryset":
+                out += [x for x in [cls_of(a) for a in f.args[:1]] + [cls_of(f.func.value)] if x]
+            else:
+                out += [x for x in [cls_of(f)] if x]
+            break
+        memo[key] = out
+        return out
+
+    def manager_models(self) -> dict:
+        """(v6c) {project manager / queryset class: [models that declare it]} (inverse of manager_classes over
+        every manager-like class attribute of project models)."""
+        hit = self.__dict__.get("_mgr_models")
+        if hit is not None:
+            return hit
+        out: dict = {}
+        for cq, ci in self.p.classes.items():
+            for attr, v in ci.attrs.items():
+                if isinstance(v, ast.Call):
+                    for mc in self.manager_classes(cq, attr):
+                        out.setdefault(mc, [])
+                        if cq not in out[mc]:
+                            out[mc].append(cq)
+        self._mgr_models = out
+        return out
 
     # ------------------------------------------------------------ resolution
     def _library_expansions(self, qn: str) -> list:
@@ -478,6 +542,15 @@ class CallGraph:
             if mod is not None and rest:
                 m = self.p.modules[mod]
                 head = f"{mod}.{rest[0]}"
+                if len(rest) == 3 and head in self.p.classes:
+                    # (v6c) `Model.objects.issue(...)`: a method of the project manager / queryset the model
+                    # declares (`objects = TokenManager()`, `QS.as_manager()`, `Manager.from_queryset(QS)()`)
+                    for mc in self.manager_classes(head, rest[1]):
+                        r = self.p.lookup_method(mc, rest[2])
+                        if r and r[0] == "project":
+                            res.receiver_type = mc
+                            res.targets.append((r[1], mc))
+                            return res
                 if len(rest) >= 2 and head in self.p.classes:
                     self._method_on_type(head, rest[-1], res)
                     return res

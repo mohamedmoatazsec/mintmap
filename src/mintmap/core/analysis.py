@@ -115,6 +115,8 @@ UNRECOGNIZED_WRAPPER_DEPTH = 2
 import sys as _sys
 
 STDLIB_TOP = set(getattr(_sys, "stdlib_module_names", ())) | {"builtins", "object"}
+# gaps that only limit what a path's fingerprint covers (not the inventory / evidence analysis)
+FINGERPRINT_LIMIT_GAPS = ("fingerprint_depth_limit", "fingerprint_name_fallback_limit")
 
 
 # (v5) decorators that only wrap transactions / caching / HTTP-method checks / sensitivity markers (Django's
@@ -976,7 +978,8 @@ class Analysis:
             q = self.resolve_dotted(mw)
             e = Entry(id=f"middleware:{mw}", kind="middleware", view=q)
             if q in self.catalog.library_middleware:
-                e.library_mints += [(m, "runs on every request") for m in self.catalog.library_middleware[q]]
+                e.library_mints += [(m, "runs on every request") for m in self.enabled_mints(
+                    e.id, self.catalog.library_middleware[q])]
             elif q in self.p.classes:
                 e.ctx_class = q
                 e.gaps += self.class_base_gaps([q])
@@ -986,7 +989,8 @@ class Analysis:
                         e.funcs.append((r[1], q, "middleware"))
                 for c in self.p.mro(q):
                     if c in self.catalog.library_middleware:
-                        e.library_mints += [(m, f"inherited from {c}") for m in self.catalog.library_middleware[c]]
+                        e.library_mints += [(m, f"inherited from {c}") for m in self.enabled_mints(
+                            e.id, self.catalog.library_middleware[c])]
                         break
                 else:
                     e.gaps += self.library_base_gaps(q)
@@ -1045,6 +1049,18 @@ class Analysis:
     # (v6) settings gaps after which an ABSENT setting may still be assigned somewhere MintMap did not evaluate
     SETTINGS_MAY_ASSIGN_ANY = {"settings_star_import_unresolved", "dynamic_setting", "no_settings_module",
                                "settings_module_missing"}
+
+    def enabled_mints(self, eid, mints) -> list:
+        """(v6c) The catalogued mints of a middleware that the project's settings do not switch off (catalog
+        `library_flow_conditions`, e.g. the SECRET_KEY_FALLBACKS re-hash branch of AuthenticationMiddleware)."""
+        out = []
+        for m in mints:
+            why = self.flow_disabled(m)
+            if why:
+                self.disabled_flows.setdefault((eid, m.ref or m.symbol), why)
+            else:
+                out.append(m)
+        return out
 
     def flow_disabled(self, mint, include=None):
         """(v6) Why a catalogued library flow cannot run with the project's settings (catalog
@@ -2231,6 +2247,7 @@ class Analysis:
         hashed = {f for f, _ in nodes}
         seen = set(hashed)
         seen_nodes, frontier, truncated = set(nodes), list(nodes), False
+        self._fallback_over = set()
         order = [f for f, _ in nodes]
         for _level in range(depth):
             nxt = []
@@ -2282,9 +2299,13 @@ class Analysis:
             hashed.add(f)
             covered |= self.inliner.inlined_bodies(f)
         self.last_closure_reached = seen
+        self.last_closure_fallback_over = sorted(self._fallback_over)
         return hashed, truncated
 
-    NAME_FALLBACK_MAX = 3
+    # (v6c) 6, was 3: four registry implementations of a backend left the cliff right after the dev case; above the
+    # limit the path's fingerprint is marked incomplete (gap fingerprint_name_fallback_limit) instead of silently
+    # hashing nothing
+    NAME_FALLBACK_MAX = 6
 
     def unresolved_method_targets(self, site, res) -> list:
         """(v6) Fingerprint-only fallback for `x.m(...)` whose receiver MintMap cannot type (an object from a
@@ -2305,7 +2326,10 @@ class Analysis:
                     idx.setdefault(q.rsplit(".", 1)[-1], []).append((q, info.cls))
             self._method_index = idx
         defs = idx.get(leaf, [])
-        return sorted(defs) if 0 < len(defs) <= self.NAME_FALLBACK_MAX else []
+        if len(defs) > self.NAME_FALLBACK_MAX:
+            self.__dict__.setdefault("_fallback_over", set()).add(leaf)
+            return []
+        return sorted(defs)
 
     # ------------------------------------------------------------------ (v5 review) dependency versions
     def version_gaps(self) -> dict:
@@ -2402,8 +2426,10 @@ class Analysis:
                 if q in self.p.classes:
                     for c in self.p.mro(q):
                         if c in self.p.classes:
-                            for mq in sorted(self.p.classes[c].methods.values()):
-                                if mq not in funcs:
+                            # (v6c) a private method inlined at every call (extract method) is in its callers' dumps
+                            omitted = self.inliner.omitted_methods(c)
+                            for name, mq in sorted(self.p.classes[c].methods.items(), key=lambda kv: kv[1]):
+                                if mq not in funcs and name not in omitted:
                                     funcs.append(mq)
                                     roots.append((mq, q))
                 else:
@@ -2496,12 +2522,12 @@ class Analysis:
         all_names = set(sv.values) | set(sv.nodes)
         groups = []
 
-        def mk(gid, names, key_filter=None, sources=(), extra=()):
+        def mk(gid, names, key_filter=None, sources=(), extra=(), closure=False):
             names = [n for n in names if n in all_names]
             if not names and not sources and not extra:
                 return
             nd = {n: digest(sv.digest_parts(n, key_filter)) for n in names}
-            sd = {q: digest([self.source_dump(q)]) for q in sources}
+            sd = {q: digest([self.source_dump(q)] + (self.closure_dumps(q) if closure else [])) for q in sources}
             vals, items = {}, {}
             for n in names:
                 v = sv.values.get(n)
@@ -2539,6 +2565,13 @@ class Analysis:
                                                                                 sv.dynamic_items("INSTALLED_APPS")))])
         taken = {"MIDDLEWARE", "MIDDLEWARE_CLASSES", "AUTHENTICATION_BACKENDS", "REST_FRAMEWORK", "INSTALLED_APPS"} \
             | set(CORE_AUTH_SETTINGS)
+        hooks = self.auth_hook_sources()
+        if hooks:
+            # (v6c) project code that libraries call from outside every path: callables named by auth-named
+            # settings of uncatalogued libraries (CAN_LOGIN_AS), receivers of authentication-library signals
+            # (populate_user, user_logged_in), predicates registered with permission registries (rules.add_perm);
+            # each with its project callee closure
+            mk("AUTH_HOOKS(project code)", [], sources=sorted(hooks), closure=True)
         by_prefixes: dict = {}
         for pkg, prefixes in sorted(overlay.PACKAGE_SETTING_PREFIXES.items()):
             by_prefixes.setdefault(tuple(sorted(prefixes)), []).append(pkg)
@@ -2553,6 +2586,88 @@ class Analysis:
                 mk("package:" + "+".join(sorted(pkgs)), names)
         self._settings_groups = groups
         return groups
+
+    AUTH_SETTING_WORDS = {"login", "loginas", "logout", "auth", "authentication", "perm", "perms", "permission",
+                          "permissions", "user", "users", "session", "token", "otp", "mfa", "sso", "saml", "saml2",
+                          "oidc", "oauth", "oauth2", "ldap", "impersonate", "impersonation", "hijack", "access",
+                          "account", "password", "social", "jwt", "signup", "signin", "credential", "credentials",
+                          "guardian", "factor"}
+    REGISTRY_WORDS = {"perm", "perms", "permission", "permissions", "rule", "rules", "predicate", "predicates",
+                      "policy", "policies", "acl", "guard"}
+
+    def auth_hook_sources(self) -> dict:
+        """(v6c) {project callable: why} for project code an authentication library runs that no path, catalogued
+        hook setting or MIDDLEWARE / AUTHENTICATION_BACKENDS / REST_FRAMEWORK entry covers."""
+        hit = getattr(self, "_auth_hooks", None)
+        if hit is not None:
+            return hit
+        from .credentials import words as _w
+        out: dict = {}
+        covered = {"MIDDLEWARE", "MIDDLEWARE_CLASSES", "AUTHENTICATION_BACKENDS", "REST_FRAMEWORK", "INSTALLED_APPS",
+                   "ROOT_URLCONF"} | set(CORE_AUTH_SETTINGS) | {r["setting"] for r in self.catalog.hook_settings}
+        for name, v in sorted(self.settings.values.items()):
+            if name in covered or not name.isupper() or not _w(name) & self.AUTH_SETTING_WORDS:
+                continue
+            for x in flat_values(v):
+                for y in (x if isinstance(x, (list, tuple)) else [x]):
+                    if isinstance(y, str) and "." in y:
+                        q = self.resolve_dotted(y)
+                        if q in self.p.functions or q in self.p.classes:
+                            out.setdefault(q, f"named by the setting {name}")
+
+        def lib_auth(q):
+            return bool(q) and not self.p.is_project(q) and q.split(".")[0] not in STDLIB_TOP and \
+                bool(_w(q.replace(".", "_")) & self.AUTH_SETTING_WORDS)
+        for mname, mod in self.p.modules.items():
+            for n in ast.walk(mod.tree):
+                if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    for d in n.decorator_list:
+                        if isinstance(d, ast.Call) and isinstance(d.func, (ast.Name, ast.Attribute)) and \
+                                (d.func.id if isinstance(d.func, ast.Name) else d.func.attr) == "receiver" and d.args:
+                            sigs = d.args[0].elts if isinstance(d.args[0], (ast.List, ast.Tuple)) else [d.args[0]]
+                            for sg in sigs:
+                                q = self.p.resolve_expr_static(mname, sg) if isinstance(sg, (ast.Name, ast.Attribute)) \
+                                    else None
+                                q = self.p.canonical(q) if q else None
+                                if lib_auth(q):
+                                    fq = self._def_qualname(mname, n)
+                                    if fq:
+                                        out.setdefault(fq, f"receiver of the signal {q}")
+                elif isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute):
+                    fq_func = self.p.resolve_expr_static(mname, n.func)
+                    fq_func = self.p.canonical(fq_func) if fq_func else None
+                    if not fq_func or self.p.is_project(fq_func) or fq_func.split(".")[0] in STDLIB_TOP:
+                        continue
+                    is_connect = n.func.attr == "connect" and lib_auth(fq_func.rsplit(".", 1)[0])
+                    is_registry = not fq_func.startswith("django.") and \
+                        bool(_w(fq_func.replace(".", "_")) & self.REGISTRY_WORDS)
+                    if not (is_connect or is_registry):
+                        continue
+                    for a in list(n.args) + [k.value for k in n.keywords]:
+                        for x in ast.walk(a):
+                            if isinstance(x, (ast.Name, ast.Attribute)):
+                                q = self.p.resolve_expr_static(mname, x)
+                                q = self.p.canonical(q) if q else None
+                                if q in self.p.functions:
+                                    out.setdefault(q, f"receiver connected to {fq_func.rsplit('.', 1)[0]}"
+                                                      if is_connect else f"registered with {fq_func}()")
+        self._auth_hooks = out
+        return out
+
+    def _def_qualname(self, mname, node):
+        for fq, info in self.p.functions.items():
+            if info.node is node:
+                return fq
+        return None
+
+    def closure_dumps(self, q) -> list:
+        """(v6c) Normalised code of the project functions a callable (or a class's methods) calls, transitively up
+        to the fingerprint depth."""
+        roots = [(q, None)] if q in self.p.functions else \
+            [(mq, q) for c in self.p.mro(q) if c in self.p.classes for mq in self.p.classes[c].methods.values()]
+        closure, _trunc = self.project_closure(roots, self.fp_depth)
+        return ["fn:" + f + ":" + self.inliner.function_dump(f) for f in sorted(closure) if f in self.p.functions
+                and f != q]
 
     def package_in_use(self, pkg) -> bool:
         """(v6c) The project installs (INSTALLED_APPS, also through an AppConfig path), imports, or names in a
@@ -2806,7 +2921,15 @@ class Analysis:
                                                        else class_shell(node)))
                 else:
                     code.append("libbase:" + c)
+        # (v6c) a path function whose body another path function's dump already contains (an inlined helper the
+        # mint was moved into) is not hashed twice: extract method leaves `code` unchanged
+        inlined = set()
+        for fq in slice_funcs:
+            if fq in self.p.functions:
+                inlined |= self.inliner.inlined_bodies(fq)
         for fq in sorted(slice_funcs):
+            if fq in inlined:
+                continue
             code.append("fn:" + fq + ":" + self.inliner.function_dump(fq))
         code.extend(extra_code)
         # project functions called from the path (they may compute the user, the
@@ -2829,6 +2952,11 @@ class Analysis:
                    for f in sorted(callee_set - set(slice_funcs)) if f in self.p.functions]
         if callee_trunc:
             gaps.append(Gap("fingerprint_depth_limit", "-", label, f"callees beyond depth {self.fp_depth}"))
+        if self.last_closure_fallback_over:
+            gaps.append(Gap("fingerprint_name_fallback_limit", "-", label,
+                            f"methods called on objects MintMap cannot type have more than {self.NAME_FALLBACK_MAX} "
+                            f"project definitions and are not hashed: "
+                            f"{', '.join(self.last_closure_fallback_over[:5])}"))
         # project code implementing recognised checks, PLUS every project form/serializer validation
         # method used on the path and every project function behind an unrecognized check (P2), whether
         # or not it is recognised as a check
@@ -2920,7 +3048,17 @@ class Analysis:
         if site is not None:
             ordinal = sum(1 for s in self.cg.sites(site_func[0])
                           if s.line < site.line and self._mint_symbol(s, site_func[1]) == mint_api.symbol)
-            mint_site_id = f"{site_func[0]}:{mint_api.symbol}:{mint_api.ref}#{ordinal}"
+            # (v6c) a mint moved into a helper that its caller on this path inlines (extract method / function)
+            # keeps the caller as its identity: the refactor must not look like a removed and a new path
+            id_func = site_func[0]
+            if chains:
+                chain = min((c for c, _ in chains), key=len)
+                fs = [f for f, _ in chain]
+                i = len(fs) - 1
+                while i > 0 and fs[i] == id_func and id_func in self.inliner.inlined_bodies(fs[i - 1]):
+                    id_func = fs[i - 1]
+                    i -= 1
+            mint_site_id = f"{id_func}:{mint_api.symbol}:{mint_api.ref}#{ordinal}"
         else:
             mint_site_id = f"library:{mint_api.symbol}:{mint_api.ref}"
         pid = hashlib.sha256(f"{entry.id}||{mint_site_id}".encode()).hexdigest()[:16]
@@ -3057,8 +3195,8 @@ class Analysis:
             # (v5 review) two flags: the evidence/inventory analysis (every gap except the callee-closure depth
             # limit) and the fingerprint (callees beyond the depth limit are not hashed).  One flag for both was
             # false on 287 of 294 Zulip paths, almost always only because of the depth limit
-            analysis_complete=not [g for g in path_gaps if g.type != "fingerprint_depth_limit"],
-            fingerprint_complete=not [g for g in path_gaps if g.type == "fingerprint_depth_limit"],
+            analysis_complete=not [g for g in path_gaps if g.type not in FINGERPRINT_LIMIT_GAPS],
+            fingerprint_complete=not [g for g in path_gaps if g.type in FINGERPRINT_LIMIT_GAPS],
             fingerprint=fp,
             # (v6) confirmed: catalog API / library flow / R3 heuristic / principal session key; candidate: see
             # candidates.py (kept out of `paths`, one review entry per site)
@@ -3123,6 +3261,7 @@ class Analysis:
                                  dq, "calls views passed in its routes' extra kwargs; checks it makes before the "
                                      "call are not linked to the paths of those views"))
         self.gaps += list(self.unreached_roots.values())
+        self.gaps += self.url_lists_filled_at_run_time(up)
         if not roots:
             self.gaps.append(Gap("no_urlconf", "-", "ROOT_URLCONF", "no root URLconf found"))
         entries = self.build_entries(up.routes)
@@ -3643,6 +3782,45 @@ class Analysis:
                     refs[k] = refs.get(k, 0) + 1
             self._name_refs = refs
         return not self._name_refs.get(fq.rsplit(".", 1)[-1])
+
+    def url_lists_filled_at_run_time(self, up) -> list:
+        """(v6c) Gaps for URL lists that a URLconf's `urlpatterns` is built from but that project code extends inside a
+        function (`ROUTES.append(path(...))` in a route-registering decorator): the routes exist only at run time,
+        so the views they route are unrouted for MintMap."""
+        lists = {}
+        for mname in sorted(up.reached):
+            mod = self.p.modules.get(mname)
+            if mod is None:
+                continue
+            for st in self.p._top_level_statements(mod.tree.body):
+                tgts = st.targets if isinstance(st, ast.Assign) else [st.target] if isinstance(
+                    st, (ast.AugAssign, ast.AnnAssign)) else []
+                if not any(isinstance(t, ast.Name) and t.id == "urlpatterns" for t in tgts) or st.value is None:
+                    continue
+                for x in ast.walk(st.value):
+                    if isinstance(x, (ast.Name, ast.Attribute)) and not (isinstance(x, ast.Name) and
+                                                                         x.id == "urlpatterns"):
+                        q = self.p.resolve_expr_static(mname, x)
+                        q = self.p.canonical(q) if q else None
+                        mm, rest = self.p.module_prefix(q) if q else (None, [])
+                        if mm and len(rest) == 1 and rest[0] in self.p.modules[mm].assigns:
+                            lists.setdefault(q, mname)
+        out = []
+        if not lists:
+            return out
+        for fq, info in self.p.functions.items():
+            for n in self.p.walk_function_body(info.node):
+                if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute) and \
+                        n.func.attr in ("append", "extend", "insert", "__iadd__") and \
+                        isinstance(n.func.value, (ast.Name, ast.Attribute)):
+                    q = self.p.resolve_expr_static(info.module, n.func.value, info)
+                    q = self.p.canonical(q) if q else None
+                    if q in lists:
+                        out.append(Gap("url_list_filled_at_run_time", self.p.file_of(fq), lists[q],
+                                       f"urlpatterns uses {q}, which {fq} extends at run time ({_u(n)[:80]}): the "
+                                       f"routes it adds are not seen; the views they route are reported as unrouted",
+                                       n.lineno))
+        return out
 
     def dynamic_dispatch_modules(self) -> set:
         """(v6c) Project modules whose attributes project code looks up by a name computed at run time:
