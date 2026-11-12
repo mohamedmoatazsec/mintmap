@@ -7,6 +7,9 @@ written for these tests; no development-project code is copied.
                                x else: urlpatterns = [path(PREFIX, include(x))]`) are one entry
     FlowConditionTests         catalogued library flows switched off by the project's settings (catalog
                                `library_flow_conditions`) are not paths, are listed, and enabling one is a new path
+    UpdateIsNotCreationTests   read-only DRF viewsets have no create flow; perform_update / UpdateView saves and
+                               perform_destroy(instance).save() update an existing row; a generator function nothing
+                               calls or names is set aside until something does
 """
 import json
 import unittest
@@ -144,6 +147,104 @@ class FlowConditionTests(unittest.TestCase):
         self.assertTrue(code & 1, findings)
         self.assertTrue([f for f in findings if f["kind"] == "new_path" and "perform_password_reset_login" in
                          json.dumps(f)], findings)
+
+
+# ============================================================================ updates are not creations
+DEVICE_MODELS = """\
+import secrets
+
+from django.db import models
+
+
+def new_device_key():
+    return secrets.token_urlsafe(24)
+
+
+def spare_secret():
+    return secrets.token_hex(16)
+
+
+class Device(models.Model):
+    name = models.CharField(max_length=40)
+    active = models.BooleanField(default=True)
+    api_key = models.CharField(max_length=40, default=new_device_key)
+"""
+DEVICE_API = """\
+from django.views.generic.edit import UpdateView
+from rest_framework import serializers, viewsets
+
+from club.models import Device
+
+
+class DeviceSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Device
+        fields = ["name"]
+
+
+class DeviceBrowse(viewsets.ReadOnlyModelViewSet):
+    queryset = Device.objects.all()
+    serializer_class = DeviceSerializer
+
+
+class DeviceAdmin(viewsets.ModelViewSet):
+    queryset = Device.objects.all()
+    serializer_class = DeviceSerializer
+
+    def perform_update(self, serializer):
+        serializer.save(name=serializer.validated_data["name"].strip())
+
+    def perform_destroy(self, instance):
+        instance.active = False
+        instance.save()
+
+
+class DeviceRename(UpdateView):
+    model = Device
+    fields = ["name"]
+
+    def form_valid(self, form):
+        form.save()
+        return super().form_valid(form)
+"""
+DEVICE_URLS = """\
+from django.urls import include, path
+from rest_framework.routers import DefaultRouter
+
+from club import api
+
+router = DefaultRouter()
+router.register("browse", api.DeviceBrowse)
+router.register("devices", api.DeviceAdmin)
+urlpatterns = [path("api/", include(router.urls)), path("rename/<int:pk>/", api.DeviceRename.as_view())]
+"""
+
+
+class UpdateIsNotCreationTests(unittest.TestCase):
+    def setUp(self):
+        self.root = project(self, {"conf/urls.py": DEVICE_URLS, "club/models.py": DEVICE_MODELS,
+                                   "club/api.py": DEVICE_API}, init=("conf", "club"))
+        self.rep = scan(self.root)
+
+    def mints(self):
+        return sorted((p["entry"]["id"], p["mint"]["api"], (p["mint"].get("site") or {}).get("function"))
+                      for p in self.rep["paths"])
+
+    def test_only_the_create_flow_creates(self):
+        ms = self.mints()
+        self.assertEqual([m for m in ms if "Device" in m[1]],
+                         [("route:api/devices/|club.api.DeviceAdmin", "club.models.Device via rest_framework create",
+                           None)], ms)
+
+    def test_unreferenced_generator_is_set_aside_until_called(self):
+        self.assertFalse([m for m in self.mints() if m[2] == "club.models.spare_secret"])
+        aside = self.rep["coverage"]["custom_credentials"]["unreferenced_functions_set_aside"]
+        self.assertEqual([a["function"] for a in aside], ["club.models.spare_secret"])
+        findings, code = run_diff(self, self.root, lambda: replace_in(
+            self.root, "club/api.py", "        instance.active = False\n",
+            "        instance.active = False\n        from club.models import spare_secret\n"
+            "        instance.name = spare_secret()\n"))
+        self.assertTrue(code & 1, findings)
 
 
 if __name__ == "__main__":

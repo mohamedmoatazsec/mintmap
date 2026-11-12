@@ -1348,6 +1348,21 @@ class CredentialHeuristics:
                     return True
         return False
 
+    UPDATE_VIEWS = ("django.views.generic.UpdateView", "django.views.generic.edit.UpdateView",
+                    "django.views.generic.edit.BaseUpdateView")
+
+    def _update_hook_param(self, info, var) -> bool:
+        """(v6) the serializer DRF passes to `perform_update(self, serializer)` (built on the instance being
+        updated, rest_framework/mixins.py:63-78), or the form Django passes to `form_valid(self, form)` of an
+        UpdateView (built with instance=self.object, django/views/generic/edit.py:110-115, 200-206): save() updates."""
+        args = [a.arg for a in info.node.args.posonlyargs + info.node.args.args]
+        if len(args) < 2 or args[1] != var or not info.cls:
+            return False
+        leaf = info.qualname.rsplit(".", 1)[-1]
+        if leaf == "perform_update":
+            return True
+        return leaf == "form_valid" and any(c in self.UPDATE_VIEWS for c in self.p.mro(info.cls))
+
     # ------------------------------------------------------------------ mints at call sites
     def creation_candidate(self, site, res, ctx):
         """(ii) a project call that creates a model whose field default is a credential generator."""
@@ -1366,7 +1381,8 @@ class CredentialHeuristics:
                 r = self.p.lookup_method(owner, "create")
                 if r and r[0] == "project":
                     owner = None      # the project create() is analysed instead
-                elif res.receiver_var and self._built_on_instance(info, res.receiver_var):
+                elif res.receiver_var and (self._built_on_instance(info, res.receiver_var) or
+                                           self._update_hook_param(info, res.receiver_var)):
                     owner = None      # Serializer(instance, data=...) / Form(instance=...): save() updates
             elif leaf in ("create", "save") and res.via == "super" and info.cls:
                 owner = ctx or info.cls

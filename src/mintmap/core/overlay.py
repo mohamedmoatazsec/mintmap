@@ -605,3 +605,32 @@ LIBRARY_CLASS_LACKS = {
     "object": _VERBS,
     "builtins.object": _VERBS,
 }
+# (v6) DRF generic views, viewsets and mixins: the methods each one defines (djangorestframework 3.18.3,
+# rest_framework/mixins.py:12-96, generics.py:188-295, viewsets.py:218-252); every other verb / action / perform_*
+# hook is absent, so a project class deriving only from read-only bases has no library create flow.
+_DRF_ALL = _VERBS | {"perform_create", "perform_update", "perform_destroy"}
+_DRF_PROVIDES = {
+    "rest_framework.mixins.CreateModelMixin": {"create", "perform_create"},
+    "rest_framework.mixins.ListModelMixin": {"list"},
+    "rest_framework.mixins.RetrieveModelMixin": {"retrieve"},
+    "rest_framework.mixins.UpdateModelMixin": {"update", "partial_update", "perform_update"},
+    "rest_framework.mixins.DestroyModelMixin": {"destroy", "perform_destroy"},
+    "rest_framework.generics.CreateAPIView": {"post", "create", "perform_create"},
+    "rest_framework.generics.ListAPIView": {"get", "list"},
+    "rest_framework.generics.RetrieveAPIView": {"get", "retrieve"},
+    "rest_framework.generics.DestroyAPIView": {"delete", "destroy", "perform_destroy"},
+    "rest_framework.generics.UpdateAPIView": {"put", "patch", "update", "partial_update", "perform_update"},
+    "rest_framework.generics.ListCreateAPIView": {"get", "post", "list", "create", "perform_create"},
+    "rest_framework.generics.RetrieveUpdateAPIView": {"get", "put", "patch", "retrieve", "update", "partial_update",
+                                                      "perform_update"},
+    "rest_framework.generics.RetrieveDestroyAPIView": {"get", "delete", "retrieve", "destroy", "perform_destroy"},
+    "rest_framework.generics.RetrieveUpdateDestroyAPIView": {"get", "put", "patch", "delete", "retrieve", "update",
+                                                             "partial_update", "perform_update", "destroy",
+                                                             "perform_destroy"},
+    "rest_framework.viewsets.ReadOnlyModelViewSet": {"list", "retrieve"},
+}
+for _c, _has in _DRF_PROVIDES.items():
+    LIBRARY_CLASS_LACKS[_c] = _DRF_ALL - _has
+for _c in ("rest_framework.views.APIView", "rest_framework.generics.GenericAPIView", "rest_framework.viewsets.ViewSet",
+           "rest_framework.viewsets.GenericViewSet", "rest_framework.viewsets.ViewSetMixin"):
+    LIBRARY_CLASS_LACKS[_c] = _DRF_ALL

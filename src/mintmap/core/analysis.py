@@ -208,6 +208,8 @@ class Analysis:
         self._settings_groups = None     # (v5, R7)
         self._hooks = None               # (v5, R5)
         self.disabled_flows: dict = {}   # (v6) (entry id, mint ref) -> why the settings switch the flow off
+        self.unreferenced_set_aside: list = []   # (v6) heuristic sites in functions nothing calls or names
+        self._name_refs = None
         self._settings_reads: dict = {}
         self.fp_depth = fp_depth
         self.chain_limit = chain_limit
@@ -3117,7 +3119,9 @@ class Analysis:
             settings_groups=self.settings_groups(),
             paths=paths, candidates=candidates, coverage=coverage)
 
-    HEURISTIC_GROUP_MIN = 6
+    # (v6) 3, was 6: with URL-prefix twins merged, shared heuristic sites reached from 3-5 routes were split into
+    # one path per route again; a lower-confidence site shared by three entry points is reviewed once
+    HEURISTIC_GROUP_MIN = 3
 
     def group_shared_heuristic_sites(self, paths) -> list:
         """(v5 review) Review cost of R3 on large projects: a heuristic credential site (a model creation with a
@@ -3342,7 +3346,36 @@ class Analysis:
                                                                           key=lambda c: (c.func, c.line))],
             models_with_credential_defaults={m: [dict(field=f, generator=g, purpose=pp) for f, g, pp in v]
                                              for m, v in sorted(self.cred.default_models.items())},
-            set_aside=sorted(self.cred.rejected, key=lambda r: (r["function"], r["line"])))
+            set_aside=sorted(self.cred.rejected, key=lambda r: (r["function"], r["line"])),
+            unreferenced_functions_set_aside=sorted(self.unreferenced_set_aside,
+                                                    key=lambda r: (r["function"], r["line"], r["mint"])))
+
+    def _unreferenced_function(self, fq) -> bool:
+        """(v6) A module-level function without decorators whose name appears nowhere else in the analysed project
+        code (names, attributes, strings), Django migrations aside (a historical field default)."""
+        info = self.p.functions.get(fq)
+        if info is None or info.cls or info.node.decorator_list or "." not in fq:
+            return False
+        if self._name_refs is None:
+            refs: dict = {}
+            for mname, mod in self.p.modules.items():
+                if ".migrations." in f".{mname}.":
+                    continue
+                for n in ast.walk(mod.tree):
+                    if isinstance(n, ast.Name):
+                        k = n.id
+                    elif isinstance(n, ast.Attribute):
+                        k = n.attr
+                    elif isinstance(n, ast.Constant) and isinstance(n.value, str) and len(n.value) < 300:
+                        k = n.value.rsplit(".", 1)[-1].strip()
+                    elif isinstance(n, ast.alias):
+                        k = (n.asname or n.name).rsplit(".", 1)[-1]
+                        refs[n.name.rsplit(".", 1)[-1]] = refs.get(n.name.rsplit(".", 1)[-1], 0) + 1
+                    else:
+                        continue
+                    refs[k] = refs.get(k, 0) + 1
+            self._name_refs = refs
+        return not self._name_refs.get(fq.rsplit(".", 1)[-1])
 
     def unrouted_paths(self, reached, all_path_gaps) -> list:
         out = []
@@ -3366,6 +3399,11 @@ class Analysis:
         for node in mint_nodes:
             fq, ctx, site, api, note = node[:5]
             cinfo = node[5] if len(node) > 5 else None
+            if api.kind == HEURISTIC_KIND and not callers.get(fq) and self._unreferenced_function(fq):
+                # (v6) a heuristic credential site in a module-level, undecorated function that no project code
+                # calls or names (not as a field default, a signal connection, a setting string): dead code
+                self.unreferenced_set_aside.append(dict(function=fq, line=site.line, mint=api.symbol))
+                continue
             roots, seen, stack = set(), {fq}, [fq]
             while stack:
                 n = stack.pop()

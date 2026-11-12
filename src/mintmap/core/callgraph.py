@@ -150,8 +150,9 @@ class CallGraph:
             t = self.class_attr_type(cls_ctx, "form_class")
             if t:
                 types.setdefault(args[1].arg, t)
-        if info.cls and name in ("perform_create", "perform_update", "perform_destroy") and len(args) >= 2:
-            # (v5, R3) DRF passes the view's serializer (serializer_class) to these hooks
+        if info.cls and name in ("perform_create", "perform_update") and len(args) >= 2:
+            # (v5, R3) DRF passes the view's serializer (serializer_class) to these hooks; (v6) perform_destroy
+            # receives the model instance being deleted (rest_framework/mixins.py:94), not the serializer
             t = self.class_attr_type(cls_ctx, "serializer_class")
             if t:
                 types.setdefault(args[1].arg, t)

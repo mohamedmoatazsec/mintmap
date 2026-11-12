@@ -1176,10 +1176,11 @@ class ReviewNoiseTests(unittest.TestCase):
         self.assertTrue(code & 4, findings)
 
     def test_few_entry_points_keep_one_path_each(self):
-        rep = scan(self.shared_project(3))
+        # (v6) the group threshold is 3 entry points (was 6): two entry points keep one path each
+        rep = scan(self.shared_project(2))
         heur = [p for p in rep["paths"] if p["mint"]["kind"] == "heuristic_custom_credential" and
                 "Invite" in p["mint"]["api"]]
-        self.assertEqual(sorted(p["entry"]["kind"] for p in heur), ["route"] * 3)
+        self.assertEqual(sorted(p["entry"]["kind"] for p in heur), ["route"] * 2)
 
     def test_depth_limit_only_clears_fingerprint_complete(self):
         root = club(self, {"club/views.py": DEEP_CHAIN.replace("    member = _l1(h)\n",
