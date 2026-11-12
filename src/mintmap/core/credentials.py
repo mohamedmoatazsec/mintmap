@@ -1023,6 +1023,28 @@ class CredentialHeuristics:
                     return True
         return False
 
+    def session_key_is_read(self, names) -> bool:
+        """(v6c) Some project function reads one of these session keys (`session.get(K)`, `session[K]`,
+        `session.pop(K)`, also through aliases and computed keys); Django's own keys always are."""
+        idx = self.__dict__.get("_session_reads")
+        if idx is None:
+            idx = set()
+            for qn, info in self.p.functions.items():
+                if not self.mentions(info) & {"session", "SessionStore"}:
+                    continue
+                for n in self.p.walk_function_body(info.node):
+                    idx |= self.session_key_read(n, info)
+            self._session_reads = idx
+        return any(k.startswith("_auth_") or k in idx or any(self._pattern_matches(p, k) for p in idx)
+                   for k in names)
+
+    @staticmethod
+    def _pattern_matches(pattern, key) -> bool:
+        if "{}" not in pattern:
+            return False
+        parts = pattern.split("{}")
+        return key.startswith(parts[0]) and key.endswith(parts[-1])
+
     def session_key_writers(self) -> dict:
         """(v6c) {session key pattern: [functions that write it]} (cached)."""
         hit = self.__dict__.get("_key_writers")
@@ -1640,6 +1662,10 @@ class CredentialHeuristics:
                 if why:
                     return None, f"kept as {sink.names} on {sink.owner}: a weak credential word " \
                                  f"({', '.join(sorted(weak))}) and {why}"
+        if sink.kind == "session" and sink.names and not self.session_key_is_read(sink.names):
+            # (v6c) a value kept in the session under a key no project code reads back (`cart_token`): nothing
+            # here uses it as a credential (watched, not a path)
+            return None, f"kept in the session as {sink.names}, which no project code reads back"
         allw = sink_words | ctx_words | owner_words
         if "api" in allw and allw & {"key", "keys", "token", "tokens"}:
             allw = allw | {"apikey"}

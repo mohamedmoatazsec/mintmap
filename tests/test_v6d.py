@@ -31,7 +31,8 @@ written for these tests; no development-project code is copied.
     IntegrationTokenTests     an integration-named field that a project authenticator looks requests up by is a
                               credential
     WeakWordReaderTests       a weak word (`code`) on a user-linked model is a credential only when project code reads
-                              it back by that field (an e-mailed code, a ping key; not a reference nobody checks)
+                              it back by that field (an e-mailed code, a ping key; not a reference nobody checks); a
+                              random value kept in the session needs a reader of its key
     SessionVocabularyTests    principal nouns alone (`user_prefers_dark`) and UI words do not make a candidate;
                               a session write after a password re-check does, whatever the key is called
     CacheHandOffTests         a random nonce kept in a cache key that another view reads back to log the user in
@@ -1128,6 +1129,33 @@ class WeakWordReaderTests(unittest.TestCase):
         self.assertEqual(routes, ["route:code/|shop.views.send_code"])
         aside = [r for r in rep["coverage"]["custom_credentials"]["set_aside"] if r["function"] == "shop.views.reserve"]
         self.assertTrue(aside and "looks it up" in aside[0]["reasons"][0], aside)
+
+    def test_session_value_nobody_reads_back(self):
+        views = textwrap.dedent("""\
+            import secrets
+
+            from django.http import HttpResponse
+
+
+            def checkout(request):
+                request.session["basket_token"] = secrets.token_urlsafe(16)
+                return HttpResponse("ok")
+
+
+            def resume(request):
+                return HttpResponse(request.session.get("resume_token", ""))
+
+
+            def start(request):
+                request.session["resume_token"] = secrets.token_urlsafe(16)
+                return HttpResponse("ok")
+            """)
+        urls = "from django.urls import path\nfrom shop import views\nurlpatterns = [path('c/', views.checkout), " \
+               "path('r/', views.resume), path('s/', views.start)]\n"
+        rep = scan(project(self, {"conf/urls.py": urls, "shop/views.py": views}))
+        routes = sorted(p["entry"]["id"] for p in rep["paths"] if p["mint"]["kind"] == "heuristic_custom_credential")
+        self.assertEqual(routes, ["route:s/|shop.views.start"])
+        self.assertEqual([w["entry"]["view"] for w in watched(rep, "random_value")], ["shop.views.checkout"])
 
 
 # ============================================================================ session vocabulary
