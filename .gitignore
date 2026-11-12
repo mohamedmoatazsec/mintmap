@@ -1,0 +1,29 @@
+# Python bytecode and caches
+__pycache__/
+*.py[cod]
+
+# Packaging / build output
+build/
+dist/
+*.egg-info/
+.eggs/
+*.whl
+
+# Virtual environments and tooling
+.venv/
+venv/
+.tox/
+.nox/
+.coverage
+htmlcov/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Editors / OS
+.idea/
+.vscode/
+.DS_Store
+
+# MintMap run output (keep mintmap.lock files in your own projects; none belong in this repo)
+mintmap-findings.json

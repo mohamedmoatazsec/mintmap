@@ -1,0 +1,9 @@
+# Put these lines at the END of .github/CODEOWNERS (the last matching pattern wins).
+# Replace the team with a visible security team that has write access and at least two members.
+/mintmap.lock            @your-org/appsec
+**/mintmap.lock          @your-org/appsec
+/.github/workflows/      @your-org/appsec
+/.github/actions/        @your-org/appsec
+/.github/CODEOWNERS      @your-org/appsec
+/CODEOWNERS              @your-org/appsec
+/docs/CODEOWNERS         @your-org/appsec

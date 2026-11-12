@@ -1,0 +1,2698 @@
+{
+ "catalog_path": "django_catalog.json",
+ "package_versions": [
+  "Django 6.1.2 (django-6.1.2-py3-none-any.whl sha256 141efee6ec64d1db6db90683bf734c550102450f444fb099063b0be1bd27d991)",
+  "djangorestframework 3.18.3 (sha256 8544bb674846731b1e3c9b309236ee1dc412905a0aa725be2ec193ca950a7d12)",
+  "djangorestframework-simplejwt 5.5.1 (sha256 2c30f3707053d384e9f315d11c2daccfcb548d4faa453111ca19a542b732e469)",
+  "django-allauth 65.20.0 (sha256 83e22cb65b742d28c49e22a2dbfb475d5ceabc844f16b7a8a5c6a2676e612e9e)",
+  "django-otp 1.7.5 (sha256 475d4111e07d61616996f098d08d29884da6397273a11f53c1b8e8c75d27e1dc)",
+  "django-two-factor-auth 1.18.1 (sha256 ccc9cee10be880037914e572389be6dcae93947709a8a9ff01fb23f7dee254f2)",
+  "django-formtools 2.7 (sha256 06e4ab1f9c999f5b2ec6670cb2d51b77117599f4f17c5855f38de158b1c7f247) -- added because two-factor-auth's MFA gating lives in formtools' wizard",
+  "django-rest-knox 5.1.0 (sha256 7dad21e91091db07796ea96f559fd2e1f67b8d42748d4e140d2fa7a0319538e7)",
+  "django-sesame 3.2.5 (sha256 dfca2b0e0d480408894d9d0423109dc659d186e1946184f62506eeda2b4377c1)",
+  "social-auth-app-django 7.1.0 (sha256 a6e51eb905c81da15548b156315690f608867d68552daadcdb5aa180500f8ff4)",
+  "social-auth-core 6.1.1 (sha256 f5ab36e843c7ea20bce96ecab95e716ab1c8afe85d3d3c322446246aaffadd13)",
+  "dj-rest-auth 7.2.0 (sdist only: dj_rest_auth-7.2.0.tar.gz sha256 f77af37da5cf6ee28f03f283a378a2f5761860e72d1d6f2fa3d50e6286000482; pip prepared sdist metadata, which runs setup.py -- reviewed afterwards, benign; the sdist also ships stale .pyc files incl. a source-less dj_rest_auth/passkeys/ package)",
+  "djoser 2.3.5 (sha256 4c662040702840f10ed74f5938d13025e177331994c52f7b9fb03cfd32cdaa57)",
+  "django-hijack 3.7.9 (sha256 76e451842684ad79ea27e79a1dea60518c845d239656c90735c2c5c6eb2f78a3)",
+  "django-oauth-toolkit 3.4.1 (sha256 c47f2a70e83bade0a47a5e9b20e86030d8ed9c0a8f10ec4ed30446cad7291f2d)",
+  "mozilla-django-oidc 5.0.2 (sha256 965a3533b0e299288cdf38ec2f8b550217c302ffe78ce5bd0b2d2f4bc436878b)",
+  "django-guardian 3.5.1 (sha256 961cda884db361a8dd8d1efc6d890d7a90991f56a1bafe5d3f6239663ec03aec) -- NOT RELEVANT: ObjectPermissionBackend.authenticate always returns None (guardian/backends.py:66); authorization only, mints nothing",
+  "webauthn (py_webauthn) 3.0.1 (sha256 9927b2f530773bd1d7f8194cd643a2e634a20995ea31f2d8f7a3e70b11c93e31) -- verifier library only, mints nothing",
+  "PyOTP 2.10.0 (pyotp-2.10.0-py3-none-any.whl sha256 1df2f6a1bcc3bb0716172a5215ddc2f8c7c7fd26a13df9927d52e1746934836c) -- v2: verifier library only, mints nothing",
+  "fido2 2.2.1 (fido2-2.2.1-py3-none-any.whl sha256 ed397da981b9ab133da6ead7309e41f924b566b749956129efe286fae097749f) -- v2: WebAuthn server verifier, mints nothing",
+  "PyJWT 2.15.1 (pyjwt-2.15.1-py3-none-any.whl sha256 42d59d631f7768a1028a64c7ff581a9bf7519804daf91fc5b6c56e30eec5e193) -- v2: jwt.decode verifier (jwt.encode was already a heuristic mint primitive in the overlay)"
+ ],
+ "mint_apis": [
+  {
+   "qualname": "django.contrib.auth.login",
+   "package": "Django",
+   "source_location": "django/django/contrib/auth/__init__.py:169",
+   "kind": "function",
+   "purpose": "full_session",
+   "semantics": "VERIFIED: writes _auth_user_id/_auth_user_backend/_auth_user_hash into request.session (lines 193-195), cycle_key() or flush() on user switch (177-189), rotate_token (CSRF), sends user_logged_in signal (198). Performs NO credential check of its own: whatever object is passed becomes the session user. Backend comes from user.backend or the backend argument; raises ValueError with multiple backends and none given (55-74). Every Django session mint in the libraries below funnels through here or alogin."
+  },
+  {
+   "qualname": "django.contrib.auth.alogin",
+   "package": "Django",
+   "source_location": "django/django/contrib/auth/__init__.py:201",
+   "kind": "async_function",
+   "purpose": "full_session",
+   "semantics": "VERIFIED: async twin of login() (session.aset at 222-224, acycle_key/aflush 205-218, user_logged_in.asend 227). Same zero-check semantics. A sink list that contains only login() misses it."
+  },
+  {
+   "qualname": "django.contrib.auth.update_session_auth_hash",
+   "package": "Django",
+   "source_location": "django/django/contrib/auth/__init__.py:370",
+   "kind": "function",
+   "purpose": "session_rotation_keep_auth",
+   "semantics": "VERIFIED: cycle_key() then rewrites HASH_SESSION_KEY only if request.user == user (379-381). Keeps the current session alive after a password change while other sessions are invalidated by the hash change. Does not authenticate anyone; risk arises only if called with a user other than the session user (guarded by the equality check)."
+  },
+  {
+   "qualname": "django.contrib.auth.aupdate_session_auth_hash",
+   "package": "Django",
+   "source_location": "django/django/contrib/auth/__init__.py:384",
+   "kind": "async_function",
+   "purpose": "session_rotation_keep_auth",
+   "semantics": "VERIFIED: async twin of update_session_auth_hash (acycle_key 386, aset 388)."
+  },
+  {
+   "qualname": "django.contrib.auth.get_user (SECRET_KEY_FALLBACKS re-hash branch)",
+   "package": "Django",
+   "source_location": "django/django/contrib/auth/__init__.py:278",
+   "kind": "function",
+   "purpose": "session_rotation_keep_auth",
+   "semantics": "VERIFIED: when the stored session hash only matches a SECRET_KEY_FALLBACKS hash, it cycle_key()s and re-writes HASH_SESSION_KEY with the current-key hash (311-314); otherwise flushes (316). Implicit, runs on every request via AuthenticationMiddleware. Async twin aget_user at :322 (acycle_key 354)."
+  },
+  {
+   "qualname": "django.contrib.auth.views.LoginView",
+   "package": "Django",
+   "source_location": "django/django/contrib/auth/views.py:77",
+   "kind": "class_based_view",
+   "purpose": "full_session",
+   "semantics": "VERIFIED: form_valid (114-116) calls auth_login (alias of django.contrib.auth.login imported at line 7) with form.get_user(). The password check is NOT in this view: it is AuthenticationForm.clean -> authenticate() (forms.py:344-357), reached only through ProcessFormView.post's form.is_valid() branch (views/generic/edit.py:150-151). authentication_form is overridable (82-83, 106-107), so the factor check depends on which form class is configured."
+  },
+  {
+   "qualname": "django.contrib.auth.views.PasswordResetConfirmView.form_valid (post_reset_login=True)",
+   "package": "Django",
+   "source_location": "django/django/contrib/auth/views.py:321",
+   "kind": "class_based_view",
+   "purpose": "full_session",
+   "semantics": "VERIFIED: default post_reset_login=False (260); when a subclass/as_view kwarg sets it True, form_valid calls auth_login(request, user, post_reset_login_backend) at 325 after SetPasswordForm.save. The only prior factor is possession of the emailed reset token, checked in dispatch via token_generator.check_token (268-292) and carried across requests in session[INTERNAL_RESET_SESSION_TOKEN]. With django-otp installed this yields a session whose otp_device is None (not OTP-verified) -- the purpose is 'recovery-derived session', not equivalent to password+MFA login."
+  },
+  {
+   "qualname": "django.contrib.auth.views.PasswordChangeView.form_valid",
+   "package": "Django",
+   "source_location": "django/django/contrib/auth/views.py:368",
+   "kind": "class_based_view",
+   "purpose": "session_rotation_keep_auth",
+   "semantics": "VERIFIED: form.save() then update_session_auth_hash (372). Requires PasswordChangeForm.clean_old_password (forms.py:537-542) and login_required on dispatch (method_decorator at views.py:353-355)."
+  },
+  {
+   "qualname": "django.contrib.auth.forms.PasswordResetForm.save",
+   "package": "Django",
+   "source_location": "django/django/contrib/auth/forms.py:444",
+   "kind": "method",
+   "purpose": "password_reset_token",
+   "semantics": "VERIFIED: for each active user with the email, emails a link containing token_generator.make_token(user) (477) and uidb64. Token = HMAC over pk, password hash, last_login, timestamp, email (tokens.py:98-122); invalidated by password/last_login change or PASSWORD_RESET_TIMEOUT. Not a session; becomes one only via PasswordResetConfirmView(post_reset_login=True)."
+  },
+  {
+   "qualname": "django.contrib.auth.tokens.PasswordResetTokenGenerator.make_token",
+   "package": "Django",
+   "source_location": "django/django/contrib/auth/tokens.py:40",
+   "kind": "method",
+   "purpose": "password_reset_token",
+   "semantics": "VERIFIED: stateless HMAC token, also reused by other libraries (djoser email.py:121/139/160 for activation and reset; dj-rest-auth forms.py:56). Same API, different purposes: purpose must be inferred from the consuming view, not the minting call."
+  },
+  {
+   "qualname": "django.contrib.auth.middleware.RemoteUserMiddleware",
+   "package": "Django",
+   "source_location": "django/django/contrib/auth/middleware.py:93",
+   "kind": "middleware",
+   "purpose": "full_session",
+   "semantics": "VERIFIED: process_request (134) reads request.META[header] (default REMOTE_USER), authenticate(remote_user=...) via RemoteUserBackend (which trusts the value and by default creates users, backends.py:270-298), then auth.login (170). Async path aprocess_request -> alogin (176, 215). Entirely configuration-driven: active only if listed in settings.MIDDLEWARE; the real factor check happens in the front-end web server, outside the repository. Subclasses commonly change header to an HTTP_ header, which makes it client-controllable unless the proxy strips it."
+  },
+  {
+   "qualname": "django.contrib.auth.middleware.PersistentRemoteUserMiddleware",
+   "package": "Django",
+   "source_location": "django/django/contrib/auth/middleware.py:281",
+   "kind": "middleware",
+   "purpose": "full_session",
+   "semantics": "VERIFIED: same as RemoteUserMiddleware but force_logout_if_no_header=False (292): session persists after the header disappears."
+  },
+  {
+   "qualname": "django.contrib.admin.sites.AdminSite.login",
+   "package": "Django",
+   "source_location": "django/django/contrib/admin/sites.py:416",
+   "kind": "method",
+   "purpose": "full_session",
+   "semantics": "VERIFIED: wraps LoginView.as_view with AdminAuthenticationForm (449), whose confirm_login_allowed adds is_staff (admin/forms.py:20-22). URL comes from admin.site.urls, i.e. a library-provided route. django-otp's OTPAdminSite and two-factor's AdminSiteOTPRequired change has_permission / replace login."
+  },
+  {
+   "qualname": "django.contrib.auth.admin.UserAdmin.user_change_password",
+   "package": "Django",
+   "source_location": "django/django/contrib/auth/admin.py:150",
+   "kind": "method",
+   "purpose": "session_rotation_keep_auth",
+   "semantics": "VERIFIED: after an admin changes a password, update_session_auth_hash(request, form.user) (187); only affects the admin's own session when form.user == request.user."
+  },
+  {
+   "qualname": "django.contrib.auth.urls (urlpatterns)",
+   "package": "Django",
+   "source_location": "django/django/contrib/auth/urls.py:10",
+   "kind": "url_include",
+   "purpose": "full_session",
+   "semantics": "VERIFIED: include('django.contrib.auth.urls') exposes LoginView at login/ (10) plus password reset/confirm/change routes. App code never calls login(); the mint path exists only through the include."
+  },
+  {
+   "qualname": "django.test.Client.login / force_login / alogin / aforce_login",
+   "package": "Django",
+   "source_location": "django/django/test/client.py:829",
+   "kind": "method",
+   "purpose": "other",
+   "semantics": "VERIFIED: test-only; _login (874) calls django.contrib.auth.login at 884, _alogin at 901. force_login (854) skips credentials entirely. Must be excluded from production inventories but reported as excluded."
+  },
+  {
+   "qualname": "rest_framework.authtoken.views.ObtainAuthToken.post",
+   "package": "djangorestframework",
+   "source_location": "djangorestframework/rest_framework/authtoken/views.py:26",
+   "kind": "class_based_view",
+   "purpose": "api_token",
+   "semantics": "VERIFIED: serializer.is_valid(raise_exception=True) then Token.objects.get_or_create(user=user) (30). AuthTokenSerializer.validate uses authenticate(username,password) (serializers.py:23-43). One static token per user (OneToOneField, models.py:13-16), no expiry; get_or_create returns the existing token, so 'login' does not rotate it. permission_classes=() and throttle_classes=() (9-10). Also exported as obtain_auth_token (34)."
+  },
+  {
+   "qualname": "rest_framework.authtoken.models.Token.save / generate_key",
+   "package": "djangorestframework",
+   "source_location": "djangorestframework/rest_framework/authtoken/models.py:29",
+   "kind": "method",
+   "purpose": "api_token",
+   "semantics": "VERIFIED: any Token(...).save() / objects.create without a key generates secrets.token_hex(20) (37, 44-45). Any app code creating Token rows (admin, signals, custom views) is a mint site even without calling ObtainAuthToken."
+  },
+  {
+   "qualname": "rest_framework.authtoken.management.commands.drf_create_token",
+   "package": "djangorestframework",
+   "source_location": "djangorestframework/rest_framework/authtoken/management/commands/drf_create_token.py:18",
+   "kind": "function",
+   "purpose": "api_token",
+   "semantics": "VERIFIED: CLI mint via Token.objects.get_or_create. Not HTTP-reachable; should be reported as out-of-scope rather than silently dropped."
+  },
+  {
+   "qualname": "rest_framework.urls (browsable API login)",
+   "package": "djangorestframework",
+   "source_location": "djangorestframework/rest_framework/urls.py:19",
+   "kind": "url_include",
+   "purpose": "full_session",
+   "semantics": "VERIFIED: path('login/', django LoginView) -- a session-login route that appears only when the project includes rest_framework.urls."
+  },
+  {
+   "qualname": "rest_framework_simplejwt.tokens.Token.for_user",
+   "package": "djangorestframework-simplejwt",
+   "source_location": "djangorestframework_simplejwt/rest_framework_simplejwt/tokens.py:216",
+   "kind": "method",
+   "purpose": "jwt_refresh",
+   "semantics": "VERIFIED: classmethod on Token; purpose depends on the receiver class: RefreshToken.for_user -> refresh token (token_type 'refresh', 377), AccessToken.for_user -> access token (372), SlidingToken.for_user -> sliding token (356). Performs NO authentication; for inactive users it only logs a warning and still mints (222-226). Adds REVOKE_TOKEN_CLAIM if CHECK_REVOKE_TOKEN (233-236)."
+  },
+  {
+   "qualname": "rest_framework_simplejwt.tokens.BlacklistMixin.for_user",
+   "package": "djangorestframework-simplejwt",
+   "source_location": "djangorestframework_simplejwt/rest_framework_simplejwt/tokens.py:335",
+   "kind": "method",
+   "purpose": "jwt_refresh",
+   "semantics": "VERIFIED: when token_blacklist app is installed, additionally OutstandingToken.objects.create (344). Conditional class body (defined only if the blacklist app is in INSTALLED_APPS) -- static resolution must model settings."
+  },
+  {
+   "qualname": "rest_framework_simplejwt.tokens.RefreshToken.access_token (property)",
+   "package": "djangorestframework-simplejwt",
+   "source_location": "djangorestframework_simplejwt/rest_framework_simplejwt/tokens.py:393",
+   "kind": "method",
+   "purpose": "jwt_access",
+   "semantics": "VERIFIED: creates an AccessToken and copies ALL claims of the refresh token except no_copy_claims (token_type, exp, jti, iat; 379-389, 406-411). Consequence: any custom claim (e.g. an 'mfa'/'amr' marker or a restricted-scope marker) placed on a refresh token propagates to every refreshed access token; conversely a claim placed only on the access token is lost on refresh."
+  },
+  {
+   "qualname": "rest_framework_simplejwt.serializers.TokenObtainPairSerializer.validate",
+   "package": "djangorestframework-simplejwt",
+   "source_location": "djangorestframework_simplejwt/rest_framework_simplejwt/serializers.py:72",
+   "kind": "method",
+   "purpose": "jwt_refresh",
+   "semantics": "VERIFIED: super().validate -> authenticate(username, password) + USER_AUTHENTICATION_RULE (44-62); then get_token(user) = RefreshToken.for_user, returns refresh + access (74-79). update_last_login only if UPDATE_LAST_LOGIN (default False, settings.py:18)."
+  },
+  {
+   "qualname": "rest_framework_simplejwt.views.TokenObtainPairView",
+   "package": "djangorestframework-simplejwt",
+   "source_location": "djangorestframework_simplejwt/rest_framework_simplejwt/views.py:53",
+   "kind": "class_based_view",
+   "purpose": "jwt_refresh",
+   "semantics": "VERIFIED: serializer class resolved at runtime from settings TOKEN_OBTAIN_SERIALIZER via import_string (_serializer_class 59, get_serializer_class 23-34). permission_classes=() authentication_classes=() (15-16). A project can swap the serializer in settings without touching views: the factor check is settings-dependent."
+  },
+  {
+   "qualname": "rest_framework_simplejwt.serializers.TokenRefreshSerializer.validate",
+   "package": "djangorestframework-simplejwt",
+   "source_location": "djangorestframework_simplejwt/rest_framework_simplejwt/serializers.py:111",
+   "kind": "method",
+   "purpose": "jwt_refresh_exchange",
+   "semantics": "VERIFIED: possession of a valid refresh token -> new access token (124); with ROTATE_REFRESH_TOKENS (default False, settings.py:16) also re-mints the refresh token (126-139), blacklisting the old one only if BLACKLIST_AFTER_ROTATION and the app is installed. Re-checks USER_AUTHENTICATION_RULE (is_active) but no factor; claims are copied (see access_token)."
+  },
+  {
+   "qualname": "rest_framework_simplejwt.views.TokenRefreshView",
+   "package": "djangorestframework-simplejwt",
+   "source_location": "djangorestframework_simplejwt/rest_framework_simplejwt/views.py:65",
+   "kind": "class_based_view",
+   "purpose": "jwt_refresh_exchange",
+   "semantics": "VERIFIED: serializer from settings TOKEN_REFRESH_SERIALIZER (71)."
+  },
+  {
+   "qualname": "rest_framework_simplejwt.views.TokenObtainSlidingView / TokenObtainSlidingSerializer.validate",
+   "package": "djangorestframework-simplejwt",
+   "source_location": "djangorestframework_simplejwt/rest_framework_simplejwt/serializers.py:89",
+   "kind": "class_based_view",
+   "purpose": "jwt_access",
+   "semantics": "VERIFIED: password -> SlidingToken (a single token used both as access credential and refresh handle; 'refresh_exp' claim set at tokens.py:362-368). View at views.py:77."
+  },
+  {
+   "qualname": "rest_framework_simplejwt.views.TokenRefreshSlidingView / TokenRefreshSlidingSerializer.validate",
+   "package": "djangorestframework-simplejwt",
+   "source_location": "djangorestframework_simplejwt/rest_framework_simplejwt/serializers.py:152",
+   "kind": "class_based_view",
+   "purpose": "jwt_refresh_exchange",
+   "semantics": "VERIFIED: checks refresh_exp then re-issues the same token with new exp/iat (157-163); no user lookup or is_active check in this serializer. View at views.py:89."
+  },
+  {
+   "qualname": "knox.models.AuthTokenManager.create",
+   "package": "django-rest-knox",
+   "source_location": "django_rest_knox/knox/models.py:31",
+   "kind": "model_manager",
+   "purpose": "api_token",
+   "semantics": "VERIFIED: generates random token, stores only its digest, returns (instance, plaintext) (39-46). Expiry default knox TOKEN_TTL. Called by app code as AuthToken.objects.create(user) -- a manager-method sink."
+  },
+  {
+   "qualname": "knox.views.LoginView.post",
+   "package": "django-rest-knox",
+   "source_location": "django_rest_knox/knox/views.py:66",
+   "kind": "class_based_view",
+   "purpose": "api_token",
+   "semantics": "VERIFIED: requires IsAuthenticated (18) using authentication_classes = api_settings.DEFAULT_AUTHENTICATION_CLASSES (17), then create_token (42-46, 78) and user_logged_in signal. The factor check is whatever DRF authentication is configured globally: with SessionAuthentication it is a session->token exchange, with knox TokenAuthentication a token->token exchange, with BasicAuthentication a password login. Purpose cannot be read from this file alone."
+  },
+  {
+   "qualname": "knox.auth.TokenAuthentication.renew_token",
+   "package": "django-rest-knox",
+   "source_location": "django_rest_knox/knox/auth.py:77",
+   "kind": "method",
+   "purpose": "other",
+   "semantics": "VERIFIED: if AUTO_REFRESH, every authenticated request extends expiry (73-74, 77-93), capped by AUTO_REFRESH_MAX_TTL. Lifetime extension without re-authentication."
+  },
+  {
+   "qualname": "sesame.utils.get_query_string / get_parameters / get_token",
+   "package": "django-sesame",
+   "source_location": "django_sesame/sesame/utils.py:37",
+   "kind": "function",
+   "purpose": "magic_link_token",
+   "semantics": "VERIFIED: all call create_token(user, scope) (utils.py:21,34,47 -> tokens.py:10). Defaults MAX_AGE=None (no expiry) and ONE_TIME=False (settings.py:16-17). Default scope '' tokens are accepted by sesame's LoginView and AuthenticationMiddleware, so a link minted for an unrelated purpose (e.g. an email footer) is a full-login credential unless a scope is used. Purpose is therefore decided by scope argument + which consumer is installed."
+  },
+  {
+   "qualname": "sesame.middleware.AuthenticationMiddleware",
+   "package": "django-sesame",
+   "source_location": "django_sesame/sesame/middleware.py:13",
+   "kind": "middleware",
+   "purpose": "full_session",
+   "semantics": "VERIFIED: on ANY request carrying ?sesame=<token>, get_user() then login(request, user) (65-73). No view-level code; active only via settings.MIDDLEWARE. Every URL becomes a potential mint entry point."
+  },
+  {
+   "qualname": "sesame.views.LoginView.get",
+   "package": "django-sesame",
+   "source_location": "django_sesame/sesame/views.py:76",
+   "kind": "class_based_view",
+   "purpose": "full_session",
+   "semantics": "VERIFIED: authenticate(sesame=token, scope=self.scope, max_age) then login() (84-93); GET request."
+  },
+  {
+   "qualname": "sesame.decorators.authenticate",
+   "package": "django-sesame",
+   "source_location": "django_sesame/sesame/decorators.py:12",
+   "kind": "function",
+   "purpose": "full_session",
+   "semantics": "VERIFIED: decorator; with permanent=True calls login() (99-100) -> session; with permanent=False only sets request.user for that request (94) -> request-scoped authentication, not a persisted credential. scope may be formatted from URL args (90)."
+  },
+  {
+   "qualname": "sesame.utils.get_user",
+   "package": "django-sesame",
+   "source_location": "django_sesame/sesame/utils.py:50",
+   "kind": "function",
+   "purpose": "other",
+   "semantics": "VERIFIED: request-scoped authentication from a token (no session). Updates last_login when ONE_TIME (which invalidates single-use tokens); returns user or None."
+  },
+  {
+   "qualname": "social_core.actions.do_complete",
+   "package": "social-auth-core",
+   "source_location": "social_auth_core/social_core/actions.py:126",
+   "kind": "function",
+   "purpose": "full_session",
+   "semantics": "VERIFIED: runs backend.complete()/pipeline, then calls the INJECTED login callable via _login_user (34-41, 187) if user active or ALLOW_INACTIVE_USERS_LOGIN; also logs in inactive users when INACTIVE_USER_LOGIN is set (199-200). The login function arrives as a parameter, so name-based call-graph analysis sees 'login(...)' on a parameter, not django.contrib.auth.login."
+  },
+  {
+   "qualname": "social_django.views.complete",
+   "package": "social-auth-app-django",
+   "source_location": "social_auth_app_django/social_django/views.py:240",
+   "kind": "function",
+   "purpose": "full_session",
+   "semantics": "VERIFIED: @login_not_required @csrf_exempt @psa; passes _do_login into do_complete (247). Factor = external IdP assertion + OAuth state (validate_state, oauth.py:114) / OIDC id_token checks; no acr/amr check by default (see check_apis). Route comes from include('social_django.urls')."
+  },
+  {
+   "qualname": "social_django.views._do_login",
+   "package": "social-auth-app-django",
+   "source_location": "social_auth_app_django/social_django/views.py:302",
+   "kind": "function",
+   "purpose": "full_session",
+   "semantics": "VERIFIED: sets user.backend then django.contrib.auth.login (310); sets session expiry from provider if SESSION_EXPIRATION."
+  },
+  {
+   "qualname": "social_django.strategy.DjangoStrategy.restore_session",
+   "package": "social-auth-app-django",
+   "source_location": "social_auth_app_django/social_django/strategy.py:297",
+   "kind": "method",
+   "purpose": "other",
+   "semantics": "VERIFIED: replaces request.session with the session whose key arrived in SAML RelayState / OpenID params (psa_session_id; callers social_core/backends/saml.py:435,448,722 and open_id.py:196), re-derives request.user, then cycle_key (306). saml.py comments state the SAML response is authenticated before RelayState is trusted (431-435). A session-reference bearer value round-tripped through the IdP: purpose 'session restoration', not a new login by itself."
+  },
+  {
+   "qualname": "allauth.account.adapter.DefaultAccountAdapter.login",
+   "package": "django-allauth",
+   "source_location": "django_allauth/allauth/account/adapter.py:588",
+   "kind": "method",
+   "purpose": "full_session",
+   "semantics": "VERIFIED: picks a backend then django_login (606). Single funnel for allauth; overridable by ACCOUNT_ADAPTER (settings-resolved class). Calling it directly (as dj-rest-auth does) bypasses allauth's login stages (MFA, email verification, login-by-code)."
+  },
+  {
+   "qualname": "allauth.account.internal.flows.login.perform_login / resume_login",
+   "package": "django-allauth",
+   "source_location": "django_allauth/allauth/account/internal/flows/login.py:90",
+   "kind": "function",
+   "purpose": "full_session",
+   "semantics": "VERIFIED: pre_login hook, then LoginStageController.handle(); only if no stage returns a response does it call adapter.login (100-112). The MFA requirement is therefore a data-driven stage list (adapter.get_login_stages, adapter.py:870-883), not a call on the path."
+  },
+  {
+   "qualname": "allauth.account.stages.LoginStageController.handle + internal.stagekit.stash_login",
+   "package": "django-allauth",
+   "source_location": "django_allauth/allauth/account/stages.py:117",
+   "kind": "method",
+   "purpose": "mfa_challenge_state",
+   "semantics": "VERIFIED: for each unhandled stage, stage.handle(); a response means 'pending' and the Login is serialized into session['account_login'] (stagekit.py:14, 65-66), expiring after ACCOUNT_LOGIN_TIMEOUT (stagekit.py:57). This pending session is the MFA-challenge state; resumption is stage.exit() -> resume_login (stages.py:43-47) in a later HTTP request."
+  },
+  {
+   "qualname": "allauth.mfa.stages.AuthenticateStage.handle",
+   "package": "django-allauth",
+   "source_location": "django_allauth/allauth/mfa/stages.py:21",
+   "kind": "method",
+   "purpose": "mfa_challenge_state",
+   "semantics": "VERIFIED: requires MFA only if the user has TOTP or WebAuthn (recovery codes alone do not count), and skips if passwordless (passkey) login was used or the browser is trusted (_should_handle 28-39). MFA requirement is per-user data + cookies, not static code."
+  },
+  {
+   "qualname": "allauth.mfa.base.views.AuthenticateView.form_valid",
+   "package": "django-allauth",
+   "source_location": "django_allauth/allauth/mfa/base/views.py:100",
+   "kind": "class_based_view",
+   "purpose": "full_session",
+   "semantics": "VERIFIED: dispatch gated by login_stage_required(AuthenticateStage) (35-38); POST -> form.is_valid() (57) -> AuthenticateForm.save (records 'mfa' authentication) -> self.stage.exit() -> resume_login -> adapter.login."
+  },
+  {
+   "qualname": "allauth.account.internal.flows.login.record_authentication",
+   "package": "django-allauth",
+   "source_location": "django_allauth/allauth/account/internal/flows/login.py:21",
+   "kind": "function",
+   "purpose": "other",
+   "semantics": "VERIFIED: appends {'method','at',...} to session['account_authentication_methods'] (49-58). Docstring states entries do NOT imply the user is signed in (24-31). This is allauth's authentication-history record (password, code, socialaccount, mfa incl. reauthenticated/passwordless flags), usable as evidence of which factors were used in this session."
+  },
+  {
+   "qualname": "allauth.account.internal.flows.login_by_code.LoginCodeVerificationProcess.finish",
+   "package": "django-allauth",
+   "source_location": "django_allauth/allauth/account/internal/flows/login_by_code.py:34",
+   "kind": "method",
+   "purpose": "full_session",
+   "semantics": "VERIFIED: after code confirmed (BaseConfirmCodeForm.clean_code compares with the code stored in session stage state, forms.py:785-789), records method='code' and, if user-initiated, starts perform_login (53-55) so MFA stages still apply; if required-by-policy, stage.exit() (57). The emailed/SMS code itself is a one-time login code (magic-link-like)."
+  },
+  {
+   "qualname": "allauth.account.internal.flows.password_reset.perform_password_reset_login",
+   "package": "django-allauth",
+   "source_location": "django_allauth/allauth/account/internal/flows/password_reset.py:24",
+   "kind": "function",
+   "purpose": "full_session",
+   "semantics": "VERIFIED: only when ACCOUNT_LOGIN_ON_PASSWORD_RESET (finalize_password_reset 61); records method='password_reset' then perform_login -> stages, so MFA still applies (contrast Django's post_reset_login which calls login() directly)."
+  },
+  {
+   "qualname": "allauth password-reset key generation",
+   "package": "django-allauth",
+   "source_location": "django_allauth/allauth/account/internal/flows/password_reset.py:101",
+   "kind": "function",
+   "purpose": "password_reset_token",
+   "semantics": "VERIFIED: make_token via a token generator for the reset email (line 101). Consumed by the reset-from-key view, which can lead to perform_password_reset_login."
+  },
+  {
+   "qualname": "allauth.account.internal.flows.signup.complete_signup",
+   "package": "django-allauth",
+   "source_location": "django_allauth/allauth/account/internal/flows/signup.py:93",
+   "kind": "function",
+   "purpose": "full_session",
+   "semantics": "VERIFIED: builds Login(signup=True) and perform_login (116); email-verification stage may hold it. prevent_enumeration also calls perform_login with user=None (72). Signup session = newly created identity, no prior factor."
+  },
+  {
+   "qualname": "allauth.account.internal.flows.email_verification.login_on_verification",
+   "package": "django-allauth",
+   "source_location": "django_allauth/allauth/account/internal/flows/email_verification.py:108",
+   "kind": "function",
+   "purpose": "full_session",
+   "semantics": "VERIFIED: exits the pending EmailVerificationStage only if LOGIN_ON_EMAIL_CONFIRMATION (or verification-by-code), the request is not already authenticated, a stage is pending, AND stage.login.user.pk == email_address.user_id (133-147). Explicit same-user binding check."
+  },
+  {
+   "qualname": "allauth.socialaccount.internal.flows.login._login",
+   "package": "django-allauth",
+   "source_location": "django_allauth/allauth/socialaccount/internal/flows/login.py:21",
+   "kind": "function",
+   "purpose": "full_session",
+   "semantics": "VERIFIED: records method='socialaccount' then perform_login (stages apply, so local MFA is still enforced after social login). Existing session is logged out first (_authenticate 75-77). Account matching may use email when SOCIALACCOUNT_EMAIL_AUTHENTICATION (models.py:385-388; setting docstring app_settings.py:98-115 warns untrusted providers can log into any account)."
+  },
+  {
+   "qualname": "allauth.mfa.webauthn.internal.flows.perform_passwordless_login",
+   "package": "django-allauth",
+   "source_location": "django_allauth/allauth/mfa/webauthn/internal/flows.py:100",
+   "kind": "function",
+   "purpose": "full_session",
+   "semantics": "VERIFIED: post_authentication(passwordless=True) then perform_login (104); AuthenticateStage then skips MFA (did_use_passwordless_login 107). begin_authentication requests user_verification=PREFERRED (webauthn/internal/auth.py:147). ASSUMED (python-fido2 not downloaded/read): fido2 does not reject UV=false when PREFERRED, so a passkey without user verification yields a single-factor (possession-only) full session."
+  },
+  {
+   "qualname": "allauth.mfa.internal.flows.trust.trust_browser",
+   "package": "django-allauth",
+   "source_location": "django_allauth/allauth/mfa/internal/flows/trust.py:63",
+   "kind": "function",
+   "purpose": "other",
+   "semantics": "VERIFIED: sets a signed cookie containing a fingerprint of (user.pk, password hash, authenticator pks/types/seeds) + timestamp (21-36, 63-80). While valid, AuthenticateStage and LoginByCodeStage are skipped. MFA-history artifact stored client-side; invalidated by credential changes via the fingerprint."
+  },
+  {
+   "qualname": "allauth.account.internal.flows.password_change.logout_on_password_change",
+   "package": "django-allauth",
+   "source_location": "django_allauth/allauth/account/internal/flows/password_change.py:44",
+   "kind": "function",
+   "purpose": "session_rotation_keep_auth",
+   "semantics": "VERIFIED: update_session_auth_hash unless ACCOUNT_LOGOUT_ON_PASSWORD_CHANGE (50-52)."
+  },
+  {
+   "qualname": "allauth.headless.internal.sessionkit.expose_session_token",
+   "package": "django-allauth",
+   "source_location": "django_allauth/allauth/headless/internal/sessionkit.py:24",
+   "kind": "function",
+   "purpose": "other",
+   "semantics": "VERIFIED: for app clients, returns strategy.create_session_token(request) whenever the session was modified and is non-empty (29-34). The X-Session-Token IS the Django session key (tokens/strategies/sessions.py:11-17). It is issued both for pending-stage sessions (MFA challenge state) and fully authenticated sessions: the same token type carries different purposes, distinguishable only by session contents (_auth_user_id vs account_login stash)."
+  },
+  {
+   "qualname": "allauth.headless.tokens.strategies.jwt.strategy.JWTTokenStrategy.create_access_token / create_access_token_payload",
+   "package": "django-allauth",
+   "source_location": "django_allauth/allauth/headless/tokens/strategies/jwt/strategy.py:48",
+   "kind": "method",
+   "purpose": "jwt_access",
+   "semantics": "VERIFIED: exposed only after the user becomes authenticated in this request (authkit.expose_access_token 83-95). Access token binds sub + encrypted sid (internal.py:263-276); refresh token stored per session (internal.py:247-261). Default JWT_STATEFUL_VALIDATION_ENABLED=False (app_settings.py:74-75): access tokens are then validated without consulting the session (internal.py:47-50), so session logout does not revoke unexpired access tokens."
+  },
+  {
+   "qualname": "allauth.headless.tokens.strategies.jwt.strategy.JWTTokenStrategy.refresh_token",
+   "package": "django-allauth",
+   "source_location": "django_allauth/allauth/headless/tokens/strategies/jwt/strategy.py:78",
+   "kind": "method",
+   "purpose": "jwt_refresh_exchange",
+   "semantics": "VERIFIED: validate_refresh_token requires the jti to be recorded in the bound session and the session user to equal sub (internal.py:110-128); rotates by default (JWT_ROTATE_REFRESH_TOKEN True). Endpoint: headless/tokens/views.py:13 RefreshTokenView."
+  },
+  {
+   "qualname": "allauth.headless.account.views.LoginView.post",
+   "package": "django-allauth",
+   "source_location": "django_allauth/allauth/headless/account/views.py:138",
+   "kind": "class_based_view",
+   "purpose": "full_session",
+   "semantics": "VERIFIED: perform_password_login (142); input validated by restkit handle_input before post (restkit/views.py:23-31, 42-53). Result is either authenticated or a pending stage."
+  },
+  {
+   "qualname": "allauth.headless.mfa.views.AuthenticateView / LoginWebAuthnView",
+   "package": "django-allauth",
+   "source_location": "django_allauth/allauth/headless/mfa/views.py:56",
+   "kind": "class_based_view",
+   "purpose": "full_session",
+   "semantics": "VERIFIED: AuthenticateView.post = input.save() + stage.exit() (62-64) with no visible is_valid in the method body; validation happens in the base class handle() (restkit/views.py:26-30) when handle_json_input is set. LoginWebAuthnView (236-251) -> perform_passwordless_login."
+  },
+  {
+   "qualname": "allauth.idp.oidc OAuth/OIDC provider (AuthorizationView, TokenView, save_bearer_token)",
+   "package": "django-allauth",
+   "source_location": "django_allauth/allauth/idp/oidc/internal/oauthlib/request_validator.py:231",
+   "kind": "method",
+   "purpose": "oauth_authorization_code_or_token",
+   "semantics": "VERIFIED: allauth can act as an OIDC provider; AuthorizationView (views.py:157) only requires request.user.is_authenticated (_login_required 210-221), TokenView at views.py:407, tokens persisted in save_bearer_token (231-268). grep for 'amr'/'acr' in allauth/idp found none: downstream relying parties are not told whether MFA was used."
+  },
+  {
+   "qualname": "django_otp.login",
+   "package": "django-otp",
+   "source_location": "django_otp/django_otp/__init__.py:7",
+   "kind": "function",
+   "purpose": "other",
+   "semantics": "VERIFIED: MFA ELEVATION of an existing session: stores device.persistent_id in session['otp_device_id'] if device.user_id == request.user.pk (23-27). Does not check that the device verified anything -- the caller must have verified a token. OTPMiddleware later re-checks binding and device.confirmed (middleware.py:80-92)."
+  },
+  {
+   "qualname": "django_otp._handle_auth_login (user_logged_in receiver)",
+   "package": "django-otp",
+   "source_location": "django_otp/django_otp/__init__.py:30",
+   "kind": "signal_or_hook",
+   "purpose": "other",
+   "semantics": "VERIFIED: connected at import time (39); whenever django.contrib.auth.login fires user_logged_in and the user object carries an otp_device attribute, the session is marked OTP-verified. Any code that sets user.otp_device before calling login() elevates the session; two-factor's remember-cookie path relies on this (core.py:398 then 168)."
+  },
+  {
+   "qualname": "django_otp.views.LoginView",
+   "package": "django-otp",
+   "source_location": "django_otp/django_otp/views.py:10",
+   "kind": "class_based_view",
+   "purpose": "full_session",
+   "semantics": "VERIFIED: subclass of Django LoginView; uses OTPAuthenticationForm for anonymous/verified users or OTPTokenForm for authenticated-but-unverified users (27-35); form_valid sets backend from session if missing (37-43) and calls Django's login -> signal -> django_otp.login."
+  },
+  {
+   "qualname": "two_factor.views.core.LoginView.done",
+   "package": "django-two-factor-auth",
+   "source_location": "django_two_factor_auth/two_factor/views/core.py:159",
+   "kind": "class_based_view",
+   "purpose": "full_session",
+   "semantics": "VERIFIED: login(request, get_user()) (168) where get_user is the user stored in session wizard storage by the AUTH step (process_step 251-268, LoginStorage 48-72). The token step is conditional (condition_dict 121-124: has_token_step requires default_device(user) and not remember_agent, 100-104). Users without a device get a password-only full session by design. The OTP check happens in an earlier HTTP request (formtools post -> form.is_valid, formtools wizard/views.py:312) and render_done does NOT re-validate non-idempotent token forms (two_factor views/utils.py:206-207; AuthenticationTokenForm.idempotent=False forms.py:126)."
+  },
+  {
+   "qualname": "two_factor.views.utils.LoginStorage.authenticated_user (setter)",
+   "package": "django-two-factor-auth",
+   "source_location": "django_two_factor_auth/two_factor/views/utils.py:66",
+   "kind": "method",
+   "purpose": "mfa_challenge_state",
+   "semantics": "VERIFIED: stores user_pk + backend in wizard session data after password step (66-69); timeout TWO_FACTOR_LOGIN_TIMEOUT default 600s (core.py:114-120)."
+  },
+  {
+   "qualname": "two_factor remember-device cookie (get_remember_device_cookie + set_cookie in done)",
+   "package": "django-two-factor-auth",
+   "source_location": "django_two_factor_auth/two_factor/views/utils.py:223",
+   "kind": "function",
+   "purpose": "other",
+   "semantics": "VERIFIED: if TWO_FACTOR_REMEMBER_COOKIE_AGE and user ticked remember, sets cookie = timestamp:md5(device_id):HMAC(device_id, user.pk, user.password, timestamp) (223-238, 273-276; set in core.py:181-195). On later logins remember_agent (core.py:379-405) sets user.otp_device and skips the token step."
+  },
+  {
+   "qualname": "two_factor.views.core.SetupView.done",
+   "package": "django-two-factor-auth",
+   "source_location": "django_two_factor_auth/two_factor/views/core.py:532",
+   "kind": "class_based_view",
+   "purpose": "other",
+   "semantics": "VERIFIED: after enrolling and validating a new device, django_otp.login(request, device) (554) marks the current session OTP-verified (enrollment counts as verification)."
+  },
+  {
+   "qualname": "hijack.views.AcquireUserView.post",
+   "package": "django-hijack",
+   "source_location": "django_hijack/hijack/views.py:90",
+   "kind": "class_based_view",
+   "purpose": "impersonation_session",
+   "semantics": "VERIFIED: LoginRequiredMixin + UserPassesTestMixin with settings.HIJACK_PERMISSION_CHECK (default superusers_only, conf.py:7, test_func 77-79); login(request, hijacked, backend=current) (101) with last_login update suppressed; pushes hijacker pk on session['hijack_history'] (94-103). Because login() flushes on user switch, any django-otp verification state of the hijacker is dropped."
+  },
+  {
+   "qualname": "hijack.views.ReleaseUserView.post",
+   "package": "django-hijack",
+   "source_location": "django_hijack/hijack/views.py:129",
+   "kind": "class_based_view",
+   "purpose": "impersonation_session",
+   "semantics": "VERIFIED: test_func only requires a non-empty hijack_history (125-126); pops hijacker pk and login(request, hijacker) (137). Restores the original user's session without re-authentication, based on server-side session history; MFA state is not restored."
+  },
+  {
+   "qualname": "oauth2_provider.views.base.AuthorizationView",
+   "package": "django-oauth-toolkit",
+   "source_location": "django_oauth_toolkit/oauth2_provider/views/base.py:79",
+   "kind": "class_based_view",
+   "purpose": "oauth_authorization_code_or_token",
+   "semantics": "VERIFIED: BaseAuthorizationView uses LoginRequiredMixin (38): ANY authenticated Django session can authorize a client (consent form or skip_authorization) -> authorization code / implicit token (create_authorization_response 169, 269, 286). No MFA/is_verified gate unless the project adds one."
+  },
+  {
+   "qualname": "oauth2_provider.views.base.TokenView.post",
+   "package": "django-oauth-toolkit",
+   "source_location": "django_oauth_toolkit/oauth2_provider/views/base.py:570",
+   "kind": "class_based_view",
+   "purpose": "oauth_authorization_code_or_token",
+   "semantics": "VERIFIED: one endpoint for authorization_code, refresh_token, password (ROPC), client_credentials and device_code grants (docstring 486-494; device branch 572-573). Password grant uses OAuth2Validator.validate_user -> authenticate(username,password) (oauth2_validators.py:1201-1228): a password-only path that bypasses any web-login MFA. Grant availability is per Application row in the DB, not code."
+  },
+  {
+   "qualname": "oauth2_provider.oauth2_validators.OAuth2Validator.save_bearer_token / _create_access_token / _create_refresh_token / _create_authorization_code",
+   "package": "django-oauth-toolkit",
+   "source_location": "django_oauth_toolkit/oauth2_provider/oauth2_validators.py:821",
+   "kind": "method",
+   "purpose": "oauth_authorization_code_or_token",
+   "semantics": "VERIFIED: persistence points for tokens (821, 1074, 1123) and codes (save_authorization_code 806, _create_authorization_code 1091). ID token auth_time = request.user.last_login (1383-1385), not the time/method of the strongest authentication; no amr/acr emitted (grep found none)."
+  },
+  {
+   "qualname": "oauth2_provider.middleware.OAuth2TokenMiddleware",
+   "package": "django-oauth-toolkit",
+   "source_location": "django_oauth_toolkit/oauth2_provider/middleware.py:14",
+   "kind": "middleware",
+   "purpose": "other",
+   "semantics": "VERIFIED: request-scoped authentication from a Bearer token via authenticate(request=request) (37-44); sets request.user and _cached_user, no session write. OAuth2Backend.authenticate verifies with scopes=[] (backends.py:19), so a token of any scope authenticates the user for all Django views that only check request.user."
+  },
+  {
+   "qualname": "mozilla_django_oidc.views.OIDCAuthenticationCallbackView.get",
+   "package": "mozilla-django-oidc",
+   "source_location": "mozilla_django_oidc/mozilla_django_oidc/views.py:67",
+   "kind": "class_based_view",
+   "purpose": "full_session",
+   "semantics": "VERIFIED: state must exist in session['oidc_states'] (92-104), nonce/code_verifier popped; auth.authenticate(request, nonce, code_verifier) (124); if user and is_active -> login_success -> auth.login (45-54, skipped if same user already logged in). Backend matches users by email iexact (auth.py:74-79) and verify_claims by default only checks that 'email' is present (auth.py:81-94); no acr/amr check: any MFA requirement must be enforced at the OP, outside the repository."
+  },
+  {
+   "qualname": "mozilla_django_oidc.middleware.SessionRefresh",
+   "package": "mozilla-django-oidc",
+   "source_location": "mozilla_django_oidc/mozilla_django_oidc/middleware.py:25",
+   "kind": "middleware",
+   "purpose": "other",
+   "semantics": "VERIFIED: when oidc_id_token_expiration passes, redirects to the OP with prompt=none (119-180); the callback then re-runs login_success, refreshing expiration without re-prompting the user. Session lifetime extension driven by the OP's SSO session."
+  },
+  {
+   "qualname": "dj_rest_auth.views.LoginView.login",
+   "package": "dj-rest-auth",
+   "source_location": "dj_rest_auth/dj_rest_auth-7.2.0/dj_rest_auth/views.py:65",
+   "kind": "method",
+   "purpose": "api_token",
+   "semantics": "VERIFIED: from serializer.validated_data['user'] mints, depending on settings, a SimpleJWT pair (USE_JWT, jwt_encode 70), a DRF/knox token via TOKEN_CREATOR (72; default_create_token = Token.objects.get_or_create, utils.py:4-6) AND a Django session if SESSION_LOGIN (default True, app_settings.py:29; process_login -> django_login 50-51). Up to three credentials from one endpoint, selected by settings. LoginSerializer uses authenticate() directly (serializers.py:26-27), so allauth login stages (MFA) are not consulted."
+  },
+  {
+   "qualname": "dj_rest_auth.utils.jwt_encode",
+   "package": "dj-rest-auth",
+   "source_location": "dj_rest_auth/dj_rest_auth-7.2.0/dj_rest_auth/utils.py:9",
+   "kind": "function",
+   "purpose": "jwt_refresh",
+   "semantics": "VERIFIED: JWT_TOKEN_CLAIMS_SERIALIZER.get_token(user) -> (access, refresh) (12-15). Wrapper: the real sink is SimpleJWT for_user."
+  },
+  {
+   "qualname": "dj_rest_auth.mfa.views.MFALoginView.login",
+   "package": "dj-rest-auth",
+   "source_location": "dj_rest_auth/dj_rest_auth-7.2.0/dj_rest_auth/mfa/views.py:33",
+   "kind": "class_based_view",
+   "purpose": "mfa_challenge_state",
+   "semantics": "VERIFIED: if the user has a TOTP Authenticator (is_mfa_enabled = TOTP only, utils.py:41-44) returns ephemeral_token instead of credentials (34-37); otherwise falls through to full LoginView.login."
+  },
+  {
+   "qualname": "dj_rest_auth.mfa.utils.create_ephemeral_token",
+   "package": "dj-rest-auth",
+   "source_location": "dj_rest_auth/dj_rest_auth-7.2.0/dj_rest_auth/mfa/utils.py:12",
+   "kind": "function",
+   "purpose": "mfa_challenge_state",
+   "semantics": "VERIFIED: TimestampSigner(salt='dj-rest-auth-mfa').sign(str(user.pk)) (13-14). Stateless bearer challenge token: not bound to session or client, no jti, reusable until MFA_EPHEMERAL_TOKEN_TIMEOUT (default 300s, app_settings.py:50)."
+  },
+  {
+   "qualname": "dj_rest_auth.mfa.views.MFAVerifyView.post",
+   "package": "dj-rest-auth",
+   "source_location": "dj_rest_auth/dj_rest_auth-7.2.0/dj_rest_auth/mfa/views.py:65",
+   "kind": "class_based_view",
+   "purpose": "full_session",
+   "semantics": "VERIFIED: MFAVerifySerializer (ephemeral token + TOTP or recovery code) then RE-IMPLEMENTS the mint sequence instead of calling LoginView.login: jwt_encode (88) / TOKEN_CREATOR (90-92) / process_login (95). Duplicated mint logic = a second mint site a sink-centric tool must find; backend chosen as AUTHENTICATION_BACKENDS[0] if missing (71-75)."
+  },
+  {
+   "qualname": "dj_rest_auth.registration.views.RegisterView.perform_create",
+   "package": "dj-rest-auth",
+   "source_location": "dj_rest_auth/dj_rest_auth-7.2.0/dj_rest_auth/registration/views.py:83",
+   "kind": "method",
+   "purpose": "api_token",
+   "semantics": "VERIFIED: on signup, if allauth EMAIL_VERIFICATION != mandatory, mints JWT pair (88) or token (90) for the newly created account; then allauth complete_signup (92-96)."
+  },
+  {
+   "qualname": "dj_rest_auth.registration.views.SocialLoginView.process_login (+ SocialLoginSerializer.validate)",
+   "package": "dj-rest-auth",
+   "source_location": "dj_rest_auth/dj_rest_auth-7.2.0/dj_rest_auth/registration/views.py:170",
+   "kind": "method",
+   "purpose": "full_session",
+   "semantics": "VERIFIED: serializer calls allauth complete_social_login (registration/serializers.py:170) and inspects the returned response only for HttpResponseBadRequest (174), then sets attrs['user'] = login.account.user (201); LoginView.login then mints tokens and process_login calls allauth adapter.login directly (171), which bypasses allauth's stage controller. SocialLoginView also does not inherit dj-rest-auth's own MFALoginView. Same pattern in SocialConnectView (174, 189)."
+  },
+  {
+   "qualname": "dj_rest_auth.jwt_auth.get_refresh_view (RefreshViewWithCookieSupport)",
+   "package": "dj-rest-auth",
+   "source_location": "dj_rest_auth/dj_rest_auth-7.2.0/dj_rest_auth/jwt_auth.py:93",
+   "kind": "class_based_view",
+   "purpose": "jwt_refresh_exchange",
+   "semantics": "VERIFIED: subclasses SimpleJWT TokenRefreshView with CookieTokenRefreshSerializer (74-91, 98-99): refresh token may come from a cookie. Class is created inside a function, so it is invisible to analyzers that only index module-level classes."
+  },
+  {
+   "qualname": "dj_rest_auth.serializers.PasswordChangeSerializer.save (update_session_auth_hash)",
+   "package": "dj-rest-auth",
+   "source_location": "dj_rest_auth/dj_rest_auth-7.2.0/dj_rest_auth/serializers.py:365",
+   "kind": "method",
+   "purpose": "session_rotation_keep_auth",
+   "semantics": "VERIFIED: update_session_auth_hash after password change (365), conditional on LOGOUT_ON_PASSWORD_CHANGE being False."
+  },
+  {
+   "qualname": "djoser.utils.login_user",
+   "package": "djoser",
+   "source_location": "djoser/djoser/utils.py:16",
+   "kind": "function",
+   "purpose": "api_token",
+   "semantics": "VERIFIED: TOKEN_MODEL.objects.get_or_create(user) (17) and, if CREATE_SESSION_ON_LOGIN, django login (18-19); sends user_logged_in (20). Wrapper used by TokenCreateView (views.py:24) and webauthn LoginView (webauthn/views.py:171)."
+  },
+  {
+   "qualname": "djoser.views.TokenCreateView",
+   "package": "djoser",
+   "source_location": "djoser/djoser/views.py:17",
+   "kind": "class_based_view",
+   "purpose": "api_token",
+   "semantics": "VERIFIED: TokenCreateSerializer.validate = authenticate(LOGIN_FIELD, password) (serializers.py:118-129); serializer and permission classes resolved from djoser settings (20-21)."
+  },
+  {
+   "qualname": "djoser.urls.jwt (jwt/create, jwt/refresh)",
+   "package": "djoser",
+   "source_location": "djoser/djoser/urls/jwt.py:5",
+   "kind": "url_include",
+   "purpose": "jwt_refresh",
+   "semantics": "VERIFIED: re-exports SimpleJWT TokenObtainPairView (5) and TokenRefreshView (6). Mint routes appear in the project only via include('djoser.urls.jwt')."
+  },
+  {
+   "qualname": "djoser.webauthn.views.LoginView.post",
+   "package": "djoser",
+   "source_location": "djoser/djoser/webauthn/views.py:129",
+   "kind": "class_based_view",
+   "purpose": "api_token",
+   "semantics": "VERIFIED: verifies an assertion with the legacy py_webauthn<1.0 API (imports 8-18; METADATA pins webauthn<1.0) with uv_required=False (155), then login_user (171). Not resolvable against current py_webauthn 3.0.1 (no WebAuthnAssertionResponse / webauthn.webauthn module): a version-specific modeling gap."
+  },
+  {
+   "qualname": "djoser.social ProviderAuthSerializer.create / TokenStrategy.obtain",
+   "package": "djoser",
+   "source_location": "djoser/djoser/social/token/jwt.py:3",
+   "kind": "function",
+   "purpose": "jwt_refresh",
+   "semantics": "VERIFIED: ProviderAuthSerializer.validate calls backend.auth_complete() directly (social/serializers.py:31) and create() passes the result to SOCIAL_AUTH_TOKEN_STRATEGY.obtain -> RefreshToken.for_user (jwt.py:6). It does not repeat social_core.do_complete's isinstance(user_model) / is_active checks (actions.py:165-200); SimpleJWT's CHECK_USER_IS_ACTIVE=True (settings.py:47) mitigates at use time. OAuth2 state is validated inside auth_complete (oauth.py:555), so the conditional pre-check at serializers.py:21-22 is redundant rather than a gap."
+  },
+  {
+   "qualname": "djoser.email (activation / password-reset / username-reset tokens)",
+   "package": "djoser",
+   "source_location": "djoser/djoser/email.py:121",
+   "kind": "function",
+   "purpose": "invitation_or_signup_token",
+   "semantics": "VERIFIED: default_token_generator.make_token at 121, 139, 160 -- the same Django HMAC generator used for activation (signup) and resets; purpose differs only by the email template / consuming view."
+  },
+  {
+   "qualname": "djoser.views.UserViewSet.set_password (update_session_auth_hash)",
+   "package": "djoser",
+   "source_location": "djoser/djoser/views.py:217",
+   "kind": "method",
+   "purpose": "session_rotation_keep_auth",
+   "semantics": "VERIFIED: update_session_auth_hash (232) when sessions are used and LOGOUT_ON_PASSWORD_CHANGE is off."
+  }
+ ],
+ "check_apis": [
+  {
+   "qualname": "django.contrib.auth.authenticate / aauthenticate",
+   "package": "Django",
+   "source_location": "django/django/contrib/auth/__init__.py:124",
+   "factor": "dispatcher over settings.AUTHENTICATION_BACKENDS (password, remote user, sesame token, OAuth bearer, OIDC code ... depending on backend)",
+   "returns": "Returns user (with user.backend set) or None; a backend raising PermissionDenied stops iteration; fires user_login_failed on failure (139-145). Which factor was checked depends on which backend matched the kwargs signature (_get_compatible_backends 43-52) -- settings-dependent. Async twin at :148."
+  },
+  {
+   "qualname": "django.contrib.auth.backends.ModelBackend.authenticate",
+   "package": "Django",
+   "source_location": "django/django/contrib/auth/backends.py:65",
+   "factor": "password",
+   "returns": "Returns user or None (implicit). Requires check_password_with_timing_attack_mitigation(...) truthy AND user_can_authenticate (is_active) (75-78). AllowAllUsersModelBackend (250) drops the is_active part."
+  },
+  {
+   "qualname": "django.contrib.auth.backends.RemoteUserBackend.authenticate",
+   "package": "Django",
+   "source_location": "django/django/contrib/auth/backends.py:270",
+   "factor": "external (web-server asserted identity)",
+   "returns": "Returns user or None; trusts remote_user unconditionally, creates unknown users when create_unknown_user=True (288-298). The real check is outside the repository."
+  },
+  {
+   "qualname": "django.contrib.auth.base_user.AbstractBaseUser.check_password / acheck_password",
+   "package": "Django",
+   "source_location": "django/django/contrib/auth/base_user.py:97",
+   "factor": "password",
+   "returns": "Returns bool; side effect: may re-hash and save on hasher upgrade (103-109). Ignoring the bool is the classic 'check present but not required' bug."
+  },
+  {
+   "qualname": "django.contrib.auth.check_password_with_timing_attack_mitigation",
+   "package": "Django",
+   "source_location": "django/django/contrib/auth/__init__.py:391",
+   "factor": "password",
+   "returns": "Returns bool for a real user; returns None (falsy) after a dummy hash when user is None (396-399). Async twin at :402."
+  },
+  {
+   "qualname": "django.contrib.auth.forms.AuthenticationForm.clean (+ confirm_login_allowed)",
+   "package": "Django",
+   "source_location": "django/django/contrib/auth/forms.py:344",
+   "factor": "password + account state",
+   "returns": "Raises ValidationError (invalid_login / inactive) (349-357, 359-374); success = form.is_valid() True. Gate is control-dependent on ProcessFormView.post's 'if form.is_valid()' (django/views/generic/edit.py:150-151). AdminAuthenticationForm.confirm_login_allowed adds is_staff (admin/forms.py:20-22)."
+  },
+  {
+   "qualname": "django.contrib.auth.tokens.PasswordResetTokenGenerator.check_token",
+   "package": "Django",
+   "source_location": "django/django/contrib/auth/tokens.py:51",
+   "factor": "possession of emailed reset token",
+   "returns": "Returns bool (False on malformed/expired/mismatch; tries SECRET_KEY_FALLBACKS) (55-82)."
+  },
+  {
+   "qualname": "django.contrib.auth.forms.PasswordChangeForm.clean_old_password",
+   "package": "Django",
+   "source_location": "django/django/contrib/auth/forms.py:537",
+   "factor": "password (re-entry)",
+   "returns": "Raises ValidationError when user.check_password fails (542)."
+  },
+  {
+   "qualname": "django.contrib.auth.get_user session-hash verification",
+   "package": "Django",
+   "source_location": "django/django/contrib/auth/__init__.py:278",
+   "factor": "session integrity (password-hash HMAC)",
+   "returns": "Returns AnonymousUser and flushes the session if the stored _auth_user_hash no longer matches (300-317): password changes invalidate other sessions."
+  },
+  {
+   "qualname": "rest_framework.authtoken.serializers.AuthTokenSerializer.validate",
+   "package": "djangorestframework",
+   "source_location": "djangorestframework/rest_framework/authtoken/serializers.py:23",
+   "factor": "password",
+   "returns": "Raises ValidationError(code='authorization') if authenticate() returns None; else attrs['user']."
+  },
+  {
+   "qualname": "rest_framework.authentication.BasicAuthentication.authenticate_credentials",
+   "package": "djangorestframework",
+   "source_location": "djangorestframework/rest_framework/authentication.py:89",
+   "factor": "password (per request)",
+   "returns": "Raises AuthenticationFailed on None/inactive; returns (user, None). Request-scoped, no session."
+  },
+  {
+   "qualname": "rest_framework.authentication.TokenAuthentication.authenticate_credentials",
+   "package": "djangorestframework",
+   "source_location": "djangorestframework/rest_framework/authentication.py:198",
+   "factor": "static API token (per request)",
+   "returns": "Raises AuthenticationFailed for unknown token or inactive user; returns (user, token)."
+  },
+  {
+   "qualname": "rest_framework.authentication.SessionAuthentication.authenticate",
+   "package": "djangorestframework",
+   "source_location": "djangorestframework/rest_framework/authentication.py:117",
+   "factor": "existing Django session + CSRF",
+   "returns": "Returns None if no active session user; raises PermissionDenied on CSRF failure (enforce_csrf 135)."
+  },
+  {
+   "qualname": "rest_framework_simplejwt.serializers.TokenObtainSerializer.validate",
+   "package": "djangorestframework-simplejwt",
+   "source_location": "djangorestframework_simplejwt/rest_framework_simplejwt/serializers.py:44",
+   "factor": "password",
+   "returns": "authenticate() then USER_AUTHENTICATION_RULE (default: user not None and is_active, authentication.py:174-184); raises AuthenticationFailed('no_active_account')."
+  },
+  {
+   "qualname": "rest_framework_simplejwt.tokens.Token.__init__ / verify / verify_token_type",
+   "package": "djangorestframework-simplejwt",
+   "source_location": "djangorestframework_simplejwt/rest_framework_simplejwt/tokens.py:46",
+   "factor": "possession of signed JWT",
+   "returns": "Raises TokenError/ExpiredTokenError on bad signature, missing exp/jti, or wrong token_type (108-142). token_type separation is the only thing preventing a refresh token being used as an access token and vice versa."
+  },
+  {
+   "qualname": "rest_framework_simplejwt.authentication.JWTAuthentication.get_validated_token / get_user",
+   "package": "djangorestframework-simplejwt",
+   "source_location": "djangorestframework_simplejwt/rest_framework_simplejwt/authentication.py:95",
+   "factor": "access JWT (per request)",
+   "returns": "Raises InvalidToken/AuthenticationFailed; get_user (120-150) enforces CHECK_USER_IS_ACTIVE (default True) and, if CHECK_REVOKE_TOKEN, password-hash revocation claim."
+  },
+  {
+   "qualname": "knox.auth.TokenAuthentication.authenticate_credentials",
+   "package": "django-rest-knox",
+   "source_location": "django_rest_knox/knox/auth.py:53",
+   "factor": "knox token (per request)",
+   "returns": "Raises AuthenticationFailed; compares digest with compare_digest (71); deletes expired tokens; validate_user requires is_active (95-99)."
+  },
+  {
+   "qualname": "sesame.backends.SesameBackendMixin.authenticate / sesame.tokens_v2.parse_token",
+   "package": "django-sesame",
+   "source_location": "django_sesame/sesame/backends.py:17",
+   "factor": "possession of magic-link token (+ optional scope)",
+   "returns": "Returns user or None (never raises): checks age vs MAX_AGE (tokens_v2.py:194-206), active user via get_user, HMAC over pk+timestamp+revocation key+scope (219-231). Revocation key covers password (INVALIDATE_ON_PASSWORD_CHANGE default True) and optionally email."
+  },
+  {
+   "qualname": "social_core.backends.oauth.OAuthAuth.validate_state",
+   "package": "social-auth-core",
+   "source_location": "social_auth_core/social_core/backends/oauth.py:114",
+   "factor": "OAuth state / CSRF binding of callback to browser session",
+   "returns": "Raises AuthInputError/AuthSessionError; constant_time_compare (129); called inside BaseOAuth2.auth_complete (555)."
+  },
+  {
+   "qualname": "social_core.backends.open_id_connect.OpenIdConnectAuth.validate_and_return_id_token",
+   "package": "social-auth-core",
+   "source_location": "social_auth_core/social_core/backends/open_id_connect.py:511",
+   "factor": "IdP assertion (id_token signature, iss/sub/aud/exp, iat age, nonce)",
+   "returns": "Raises AuthResponseError; returns claims. acr_values can be REQUESTED via setting (322-329) but validate_claims (393-415) and required claims (622-631) never check the returned acr/amr: an IdP-side MFA requirement is not verified in code."
+  },
+  {
+   "qualname": "social_core.pipeline.social_auth.associate_by_email",
+   "package": "social-auth-core",
+   "source_location": "social_auth_core/social_core/pipeline/social_auth.py:252",
+   "factor": "email ownership as asserted by provider",
+   "returns": "Returns {'user': existing} when exactly one local user has the email; disabled in DEFAULT_AUTH_PIPELINE (pipeline/__init__.py:23-25); docstring warns it is insecure unless the provider verifies email."
+  },
+  {
+   "qualname": "social_core.utils.user_is_active",
+   "package": "social-auth-core",
+   "source_location": "social_auth_core/social_core/utils.py:206",
+   "factor": "account state",
+   "returns": "Returns bool; gates login in do_complete unless ALLOW_INACTIVE_USERS_LOGIN."
+  },
+  {
+   "qualname": "allauth.account.auth_backends.AuthenticationBackend.authenticate / _check_password",
+   "package": "django-allauth",
+   "source_location": "django_allauth/allauth/account/auth_backends.py:21",
+   "factor": "password (username/email/phone login)",
+   "returns": "Returns user or None; _check_password (102-112) = user.check_password and user_can_authenticate."
+  },
+  {
+   "qualname": "allauth.mfa.base.forms.BaseAuthenticateForm.clean_code",
+   "package": "django-allauth",
+   "source_location": "django_allauth/allauth/mfa/base/forms.py:25",
+   "factor": "TOTP or recovery code",
+   "returns": "Raises validation_error('incorrect_code'); rate limited; iterates ALL non-WebAuthn authenticators of self.user (recovery codes included) and records the matching authenticator (29-39). self.user comes from the stashed login, binding the code to that user."
+  },
+  {
+   "qualname": "allauth.mfa.totp.internal.auth.TOTP.validate_code",
+   "package": "django-allauth",
+   "source_location": "django_allauth/allauth/mfa/totp/internal/auth.py:101",
+   "factor": "TOTP",
+   "returns": "Returns bool; replay-protected via cache.add of used code (_mark_code_used 111-118). CONFIG-DEPENDENT BYPASS: returns True for MFA_TOTP_INSECURE_BYPASS_CODE (72-73, 102-103), which app_settings.py:71-83 only permits when settings.DEBUG is True (raises ImproperlyConfigured otherwise) -- the semantics of the check change with settings, not code."
+  },
+  {
+   "qualname": "allauth.mfa.recovery_codes.internal.auth.RecoveryCodes.validate_code",
+   "package": "django-allauth",
+   "source_location": "django_allauth/allauth/mfa/recovery_codes/internal/auth.py:108",
+   "factor": "recovery code",
+   "returns": "Returns bool; select_for_update + marks code used (110-122)."
+  },
+  {
+   "qualname": "allauth.mfa.webauthn.internal.auth.complete_authentication",
+   "package": "django-allauth",
+   "source_location": "django_allauth/allauth/mfa/webauthn/internal/auth.py:165",
+   "factor": "WebAuthn assertion (python-fido2)",
+   "returns": "Raises validation_error on unknown credential/missing state; returns Authenticator found by get_authenticator_by_credential_id(user, ...) (121-131), i.e. bound to the given user. For passkey login the user comes from the assertion's userHandle (extract_user_from_response 153-162)."
+  },
+  {
+   "qualname": "allauth.account.forms.BaseConfirmCodeForm.clean_code",
+   "package": "django-allauth",
+   "source_location": "django_allauth/allauth/account/forms.py:785",
+   "factor": "one-time code (login-by-code, email/phone verification, password reset by code)",
+   "returns": "Raises incorrect_code; compare_user_code against expected code from session stage state; attempts limited by AbstractCodeVerificationProcess (code_verification.py:62-68)."
+  },
+  {
+   "qualname": "allauth.mfa.stages.AuthenticateStage._should_handle",
+   "package": "django-allauth",
+   "source_location": "django_allauth/allauth/mfa/stages.py:28",
+   "factor": "MFA requirement decision",
+   "returns": "Returns bool: False if no TOTP/WebAuthn authenticator, passwordless login used, or trusted browser (31-38). This decides whether a check is REQUIRED; it is data/cookie-dependent."
+  },
+  {
+   "qualname": "allauth.headless.internal.restkit.views.RESTView.handle_input",
+   "package": "django-allauth",
+   "source_location": "django_allauth/allauth/headless/internal/restkit/views.py:42",
+   "factor": "input validation gate for all headless endpoints (incl. MFA code)",
+   "returns": "Returns ErrorResponse if input.is_valid() fails, else None; invoked from handle() (23-31) only when handle_json_input and method != GET. The factor check that guards stage.exit() lives in this base class, not in the endpoint method."
+  },
+  {
+   "qualname": "allauth.headless.tokens.strategies.jwt.internal.validate_access_token / validate_refresh_token",
+   "package": "django-allauth",
+   "source_location": "django_allauth/allauth/headless/tokens/strategies/jwt/internal.py:35",
+   "factor": "JWT possession",
+   "returns": "Return payload tuple or None. Access tokens skip session lookup unless JWT_STATEFUL_VALIDATION_ENABLED (39-50); refresh tokens always require session-recorded jti and matching session user (110-128)."
+  },
+  {
+   "qualname": "django_otp.verify_token",
+   "package": "django-otp",
+   "source_location": "django_otp/django_otp/__init__.py:42",
+   "factor": "OTP against a specific device",
+   "returns": "Returns the Device or None. Binds device to user (device.user_id == user.pk, 66-71) and uses select_for_update via from_persistent_id(for_verify=True)."
+  },
+  {
+   "qualname": "django_otp.match_token",
+   "package": "django-otp",
+   "source_location": "django_otp/django_otp/__init__.py:76",
+   "factor": "OTP against all user devices",
+   "returns": "Returns Device or None; docstring says no longer recommended (throttling interactions)."
+  },
+  {
+   "qualname": "django_otp.models.Device.verify_token (+ plugins)",
+   "package": "django-otp",
+   "source_location": "django_otp/django_otp/models.py:242",
+   "factor": "OTP",
+   "returns": "Returns bool. Base class returns False; TOTPDevice (plugins/otp_totp/models.py:109) checks throttling, tolerance, replay via last_t; StaticDevice (plugins/otp_static/models.py:31) deletes the used token. A subclass override is where 'helper starts accepting every OTP' would appear."
+  },
+  {
+   "qualname": "django_otp.models.Device.verify_is_allowed / ThrottlingMixin.verify_is_allowed",
+   "package": "django-otp",
+   "source_location": "django_otp/django_otp/models.py:507",
+   "factor": "throttling",
+   "returns": "Returns (bool, dict) tuple -- a truthy tuple even when not allowed; callers must unpack (forms.py:173)."
+  },
+  {
+   "qualname": "django_otp.forms.OTPAuthenticationFormMixin.clean_otp / _chosen_device / _verify_token",
+   "package": "django-otp",
+   "source_location": "django_otp/django_otp/forms.py:82",
+   "factor": "OTP + device/user binding",
+   "returns": "Raises ValidationError; sets user.otp_device only on success (101-107); _chosen_device discards a device belonging to another user (124-139: explicit wrong-user defence)."
+  },
+  {
+   "qualname": "django_otp.middleware.is_verified / OTPMiddleware._finalize_device",
+   "package": "django-otp",
+   "source_location": "django_otp/django_otp/middleware.py:11",
+   "factor": "session MFA state",
+   "returns": "is_verified returns user.otp_device is not None; _finalize_device (80-92) drops a session device that is unconfirmed or belongs to another user."
+  },
+  {
+   "qualname": "django_otp.decorators.otp_required / django_otp.admin.OTPAdminSite.has_permission",
+   "package": "django-otp",
+   "source_location": "django_otp/django_otp/decorators.py:7",
+   "factor": "MFA requirement on resource access",
+   "returns": "user_passes_test(user.is_verified() or (if_configured and no device)) (22-25); OTPAdminSite adds is_verified (admin.py:105-110). These are consumer-side gates: a session minted without OTP is still a full Django session for views that do not use them."
+  },
+  {
+   "qualname": "two_factor.forms.AuthenticationTokenForm.clean",
+   "package": "django-two-factor-auth",
+   "source_location": "django_two_factor_auth/two_factor/forms.py:163",
+   "factor": "OTP",
+   "returns": "clean_otp(self.user) -> raises ValidationError; idempotent=False (126) so it is not re-validated at wizard completion."
+  },
+  {
+   "qualname": "two_factor.views.utils.validate_remember_device_cookie",
+   "package": "django-two-factor-auth",
+   "source_location": "django_two_factor_auth/two_factor/views/utils.py:241",
+   "factor": "remembered prior MFA (signed cookie)",
+   "returns": "Returns True, False (device mismatch) or raises BadSignature/SignatureExpired; HMAC compared with '!=' (256)."
+  },
+  {
+   "qualname": "two_factor.plugins.webauthn.forms.WebauthnAuthenticationTokenForm._verify_token",
+   "package": "django-two-factor-auth",
+   "source_location": "django_two_factor_auth/two_factor/plugins/webauthn/forms.py:81",
+   "factor": "WebAuthn assertion (py_webauthn)",
+   "returns": "Returns device or raises ValidationError; binds credential to user via WebauthnDevice.objects.get(user=user, key_handle=credential_id) (90); require_user_verification only if TWO_FACTOR_WEBAUTHN_UV_REQUIREMENT == required (plugins/webauthn/utils.py:138)."
+  },
+  {
+   "qualname": "formtools.wizard.views.WizardView.get_form_list / post / render_done",
+   "package": "django-formtools",
+   "source_location": "django_formtools/formtools/wizard/views.py:204",
+   "factor": "step sequencing for multi-request MFA",
+   "returns": "condition_dict callables decide which steps exist (232-238); post validates only the current step's form (312) and calls render_done when it is the last step (325-327). two-factor overrides render_done to skip non-idempotent forms (two_factor/views/utils.py:193-217)."
+  },
+  {
+   "qualname": "webauthn.verify_authentication_response",
+   "package": "webauthn (py_webauthn)",
+   "source_location": "webauthn/webauthn/authentication/verify_authentication_response.py:47",
+   "factor": "WebAuthn assertion",
+   "returns": "Returns VerifiedAuthentication(new_sign_count, user_verified, ...) (189-195); raises InvalidAuthenticationResponse on any failure. require_user_verification defaults to False (55, check at 153). It has NO notion of a user: binding the credential_public_key to the right account is entirely the caller's job."
+  },
+  {
+   "qualname": "mozilla_django_oidc.auth.OIDCAuthenticationBackend.verify_token",
+   "package": "mozilla-django-oidc",
+   "source_location": "mozilla_django_oidc/mozilla_django_oidc/auth.py:194",
+   "factor": "IdP id_token signature + nonce",
+   "returns": "Returns payload; raises SuspiciousOperation on nonce mismatch when OIDC_USE_NONCE (210-213)."
+  },
+  {
+   "qualname": "mozilla_django_oidc.auth.OIDCAuthenticationBackend.verify_claims / filter_users_by_claims",
+   "package": "mozilla-django-oidc",
+   "source_location": "mozilla_django_oidc/mozilla_django_oidc/auth.py:81",
+   "factor": "claim policy",
+   "returns": "verify_claims returns bool (default: 'email' in claims when email scope requested, else True with a warning, 84-94); user selection by email iexact (74-79). No acr/amr evaluation."
+  },
+  {
+   "qualname": "oauth2_provider.oauth2_validators.OAuth2Validator.validate_user",
+   "package": "django-oauth-toolkit",
+   "source_location": "django_oauth_toolkit/oauth2_provider/oauth2_validators.py:1201",
+   "factor": "password (ROPC grant)",
+   "returns": "Returns bool; sets request.user when authenticate() succeeds and user is_active (1225-1228)."
+  },
+  {
+   "qualname": "oauth2_provider.oauth2_validators.OAuth2Validator.validate_code / validate_refresh_token / authenticate_client",
+   "package": "django-oauth-toolkit",
+   "source_location": "django_oauth_toolkit/oauth2_provider/oauth2_validators.py:697",
+   "factor": "authorization code / refresh token / client secret",
+   "returns": "Return bool to oauthlib (validate_code 697, validate_refresh_token 1241, authenticate_client 453); oauthlib turns False into an OAuth error response."
+  },
+  {
+   "qualname": "oauth2_provider.backends.OAuth2Backend.authenticate",
+   "package": "django-oauth-toolkit",
+   "source_location": "django_oauth_toolkit/oauth2_provider/backends.py:16",
+   "factor": "OAuth bearer token",
+   "returns": "Returns request.user or None; verify_request(scopes=[]) (19) so any scope is accepted."
+  },
+  {
+   "qualname": "dj_rest_auth.mfa.serializers.MFAVerifySerializer.validate",
+   "package": "dj-rest-auth",
+   "source_location": "dj_rest_auth/dj_rest_auth-7.2.0/dj_rest_auth/mfa/serializers.py:17",
+   "factor": "ephemeral challenge token + TOTP or recovery code",
+   "returns": "Raises ValidationError; user comes from the signed ephemeral token (20), then TOTP.validate_code(user, code) or RecoveryCodes.validate_code (45-54) for THAT user."
+  },
+  {
+   "qualname": "dj_rest_auth.mfa.totp.TOTP.validate_code",
+   "package": "dj-rest-auth",
+   "source_location": "dj_rest_auth/dj_rest_auth-7.2.0/dj_rest_auth/mfa/totp.py:60",
+   "factor": "TOTP",
+   "returns": "Returns bool; pyotp verify with valid_window=1 (29); rejects only an exact repeat of the last accepted code (70-71)."
+  },
+  {
+   "qualname": "dj_rest_auth.mfa.utils.verify_ephemeral_token",
+   "package": "dj-rest-auth",
+   "source_location": "dj_rest_auth/dj_rest_auth-7.2.0/dj_rest_auth/mfa/utils.py:17",
+   "factor": "possession of MFA challenge token",
+   "returns": "Returns user; raises BadSignature/SignatureExpired (and DoesNotExist for a deleted user)."
+  },
+  {
+   "qualname": "dj_rest_auth.serializers.LoginSerializer.validate",
+   "package": "dj-rest-auth",
+   "source_location": "dj_rest_auth/dj_rest_auth-7.2.0/dj_rest_auth/serializers.py:127",
+   "factor": "password + is_active + (allauth) mandatory email verification",
+   "returns": "Raises ValidationError; uses django authenticate (26-27); validate_email_verification_status (120-125)."
+  },
+  {
+   "qualname": "djoser.serializers.TokenCreateSerializer.validate",
+   "package": "djoser",
+   "source_location": "djoser/djoser/serializers.py:118",
+   "factor": "password",
+   "returns": "Calls self.fail('invalid_credentials') (raises ValidationError) when authenticate() returns None."
+  },
+  {
+   "qualname": "hijack.permissions.superusers_only / superusers_and_staff (HIJACK_PERMISSION_CHECK)",
+   "package": "django-hijack",
+   "source_location": "django_hijack/hijack/permissions.py:1",
+   "factor": "authorization to impersonate",
+   "returns": "Return bool; selected by dotted path in settings (conf.py:7) -- swapping the setting changes who can mint impersonation sessions without any code change."
+  },
+  {
+   "qualname": "pyotp.totp.TOTP.verify",
+   "package": "PyOTP",
+   "source_location": "pyotp/pyotp/totp.py:68",
+   "factor": "TOTP one-time code (pyotp)",
+   "returns": "Returns bool: True iff str(otp) equals self.at(for_time, i) for some i in [-valid_window, valid_window] (68-86), compared with utils.strings_equal -> hmac.compare_digest (utils.py:91). No user binding: whose code it is depends only on the secret passed to TOTP(secret) by the caller. No replay protection: a code stays valid for its whole window unless the caller blocks reuse. Public re-export pyotp.TOTP (pyotp/__init__.py:10); subclass pyotp.contrib.steam.Steam (contrib/steam.py:10).",
+   "added_in": "v2"
+  },
+  {
+   "qualname": "pyotp.hotp.HOTP.verify",
+   "package": "PyOTP",
+   "source_location": "pyotp/pyotp/hotp.py:47",
+   "factor": "HOTP one-time code (pyotp)",
+   "returns": "Returns bool: strings_equal(str(otp), str(self.at(counter))) (54). The counter is supplied by the caller and is NOT advanced; replay protection is the caller's job. Re-export pyotp.HOTP (pyotp/__init__.py:8).",
+   "added_in": "v2"
+  },
+  {
+   "qualname": "fido2.server.Fido2Server.authenticate_complete",
+   "package": "fido2 (python-fido2)",
+   "source_location": "fido2/fido2/server.py:324",
+   "factor": "WebAuthn assertion (python-fido2)",
+   "returns": "Raises ValueError on wrong client-data type, origin, challenge, RP-ID hash, missing user-presence flag, missing user-verification when state requires it, bad signature, or unknown credential id (347-376); returns the matching AttestedCredentialData (374). User binding comes only from the `credentials` list the caller passes (the caller must load the credentials of the intended user).",
+   "added_in": "v2"
+  },
+  {
+   "qualname": "jwt.api_jwt.PyJWT.decode / jwt.decode / decode_complete",
+   "package": "PyJWT",
+   "source_location": "pyjwt/jwt/api_jwt.py:305",
+   "factor": "JWT signature + registered claims (PyJWT)",
+   "returns": "Returns the claims dict; raises jwt.exceptions.* (DecodeError, ExpiredSignatureError, InvalidAudienceError ...) on failure (_validate_claims 384-580). Module-level jwt.decode / jwt.decode_complete are bound methods of a global PyJWT (api_jwt.py:591-595; re-exported in jwt/__init__.py:9). options={'verify_signature': False} (or the deprecated verify=False) turns signature verification off (243-262), in which case nothing is verified.",
+   "added_in": "v2"
+  },
+  {
+   "qualname": "django.core.signing.loads / Signer.unsign / unsign_object / TimestampSigner.unsign",
+   "package": "Django",
+   "source_location": "django/django/core/signing.py:195",
+   "factor": "signed token possession (Django signing, SECRET_KEY/salt HMAC)",
+   "returns": "Return the unsigned value/object; raise BadSignature if the HMAC does not match (Signer.unsign 246-253) and SignatureExpired when max_age is given and exceeded (TimestampSigner.unsign 302-317). loads() = TimestampSigner(...).unsign_object(max_age=max_age) (195-214); max_age defaults to None, i.e. tokens never expire unless the caller passes max_age. One-time use is NOT enforced.",
+   "added_in": "v2"
+  },
+  {
+   "qualname": "django.contrib.auth.hashers.check_password / acheck_password",
+   "package": "Django",
+   "source_location": "django/django/contrib/auth/hashers.py:75",
+   "factor": "password (hash comparison)",
+   "returns": "Returns bool is_correct from verify_password(password, encoded) (75-86; async twin 89). The caller chooses which encoded hash to compare against, i.e. which account.",
+   "added_in": "v2"
+  },
+  {
+   "qualname": "django.contrib.auth.hashers.verify_password",
+   "package": "Django",
+   "source_location": "django/django/contrib/auth/hashers.py:39",
+   "factor": "password (hash comparison)",
+   "returns": "Returns a (is_correct, must_update) TUPLE, which is always truthy: `if verify_password(...)` does not test the password. Only the first element carries success.",
+   "added_in": "v2"
+  },
+  {
+   "qualname": "django_otp.oath.TOTP.verify",
+   "package": "django-otp",
+   "source_location": "django_otp/django_otp/oath.py:171",
+   "factor": "TOTP one-time code (django_otp.oath)",
+   "returns": "Returns bool verified (171-201) for token within +/- tolerance steps and t >= min_t; replay protection only if the caller passes min_t (the device models do, the bare helper does not).",
+   "added_in": "v2"
+  }
+ ],
+ "implicit_flows": "All source_location paths are relative to a directory of unpacked distributions, one subdirectory per package (e.g. django/ for the Django wheel listed in package_versions). Each entry was read in the unpacked wheel/sdist; nothing was installed or imported. MINT PATHS THAT APP CODE NEVER CALLS EXPLICITLY: (1) MIDDLEWARE listed in settings.MIDDLEWARE: django.contrib.auth.middleware.RemoteUserMiddleware/PersistentRemoteUserMiddleware (login at middleware.py:170, alogin at :215); sesame.middleware.AuthenticationMiddleware (login on any URL carrying ?sesame=, middleware.py:73); oauth2_provider OAuth2TokenMiddleware (request-scoped user from bearer, middleware.py:41-43); mozilla_django_oidc SessionRefresh (prompt=none re-auth, middleware.py:119); django.contrib.auth AuthenticationMiddleware -> get_user fallback-key session re-hash (__init__.py:311-314); django_otp OTPMiddleware (derives is_verified). (2) URL INCLUDES / library routes: django.contrib.auth.urls (urls.py:10), admin.site.urls (AdminSite.login sites.py:416), rest_framework.urls (urls.py:19), social_django.urls (views.complete), allauth.urls / allauth.headless urls (account, mfa, tokens/refresh), allauth.idp urls (OIDC provider TokenView/AuthorizationView), oauth2_provider.urls (TokenView/AuthorizationView), mozilla_django_oidc.urls (callback), dj_rest_auth.urls and dj_rest_auth.registration.urls (+ get_refresh_view() class built at runtime, jwt_auth.py:93-113), djoser.urls.authtoken / djoser.urls.jwt (urls/jwt.py:5-6), hijack.urls, two_factor.urls, knox.urls, sesame LoginView. (3) SIGNALS: django_otp connects _handle_auth_login to user_logged_in at import (django_otp/__init__.py:39) -- setting user.otp_device before any login() marks the session OTP-verified. (4) SETTINGS-RESOLVED CLASSES/CALLABLES that change what a view checks or mints: AUTHENTICATION_BACKENDS (authenticate dispatch); DRF DEFAULT_AUTHENTICATION_CLASSES (decides what knox LoginView accepts, knox/views.py:17); SIMPLE_JWT TOKEN_OBTAIN_SERIALIZER/TOKEN_REFRESH_SERIALIZER/USER_AUTHENTICATION_RULE/ROTATE_REFRESH_TOKENS; REST_AUTH LOGIN_SERIALIZER/TOKEN_CREATOR/USE_JWT/SESSION_LOGIN/JWT_TOKEN_CLAIMS_SERIALIZER; DJOSER SERIALIZERS/CREATE_SESSION_ON_LOGIN/SOCIAL_AUTH_TOKEN_STRATEGY; ACCOUNT_ADAPTER and adapter.get_login_stages (allauth MFA presence = MFA_ENABLED + per-user authenticators); ACCOUNT_LOGIN_ON_PASSWORD_RESET / LOGIN_ON_EMAIL_CONFIRMATION / LOGIN_BY_CODE_REQUIRED; MFA_TOTP_INSECURE_BYPASS_CODE (+DEBUG); SOCIALACCOUNT_EMAIL_AUTHENTICATION; SOCIAL_AUTH_PIPELINE / INACTIVE_USER_LOGIN / ALLOW_INACTIVE_USERS_LOGIN; SESAME_MAX_AGE/ONE_TIME/TOKENS; HIJACK_PERMISSION_CHECK; TWO_FACTOR_REMEMBER_COOKIE_AGE; HEADLESS_TOKEN_STRATEGY / JWT_STATEFUL_VALIDATION_ENABLED; OIDC_* (mozilla), DOT Application.authorization_grant_type rows in the DATABASE (password grant availability is data, not code). (5) INDIRECTION THAT DEFEATS NAME-BASED CALL GRAPHS: login passed as a function argument (social_core.actions.do_complete(backend, login, ...) -> _login_user calls the parameter, actions.py:34-39); adapter method overridable per project (allauth DefaultAccountAdapter.login); aliased imports (auth_login, django_login, 'from django.contrib.auth import login as ...'); classmethod purpose determined by receiver class (Token.for_user); duplicated mint sequence (dj_rest_auth MFAVerifyView re-implements LoginView.login, mfa/views.py:84-95); classes created inside functions (dj_rest_auth get_refresh_view). (6) MULTI-REQUEST STATE MACHINES (the factor check and the mint are in DIFFERENT HTTP requests, linked only by session or signed-token state): allauth LoginStageController + session['account_login'] stash (stages.py:117-145, stagekit.py:65); two-factor-auth formtools wizard + LoginStorage + condition_dict (core.py:121-124, utils.py:48-72); dj-rest-auth ephemeral_token (TimestampSigner, mfa/utils.py:12-22); Django PasswordResetConfirmView session[INTERNAL_RESET_SESSION_TOKEN] (views.py:279-292); social-auth partial pipeline tokens (utils.py:374) and SAML RelayState session restore (saml.py:435-448, 722). A per-request backward slice from login() to the HTTP entry point will NOT contain the OTP check in any of these. (7) AUTHENTICATION-HISTORY CARRIERS that make a later mint skip a factor: allauth session['account_authentication_methods'] (flows/login.py:49-58) and mfa trust cookie (trust.py:63-80); two-factor remember-device cookie (utils.py:223-276); allauth passwordless record (webauthn flows.py:107); hijack session['hijack_history'] (views.py:94-103, 130-139); SimpleJWT claim copying refresh->access (tokens.py:393-411). External MFA/SSO evidence is NOT verified in code by social-core OIDC (acr_values only requested, open_id_connect.py:322-329), mozilla-django-oidc (verify_claims checks only email), DOT/allauth-idp (no amr/acr emitted; DOT auth_time = last_login, oauth2_validators.py:1383). (8) NON-HTTP / OUT-OF-SCOPE mints to report as excluded rather than drop: django.test.Client.login/force_login (test/client.py:829-901), DRF drf_create_token management command, Django admin token rows. METHOD & LIMITS: (a) An AST name-scan (parse-only) over all 18 unpacked packages found 179 call sites matching 28 mint-related names with 0 parse failures; most hits for generic names were false positives (e.g. 31 get_query_string hits in django/contrib/admin, template create_token, smtp login), and it could not distinguish social_core's login-parameter call from a real auth login -- evidence that a plain name list is both noisy and incomplete. (b) python-fido2 (used by allauth WebAuthn) and pyotp were not downloaded; statements about their behaviour are ASSUMED. (c) Only latest releases were read; behaviour differs by version (e.g. djoser's webauthn module targets py_webauthn<1.0). (d) No invitation-token implementation exists in any listed package (django-invitations was not in scope); the closest are signup/activation tokens (djoser email.py, allauth email confirmation).",
+ "catalog_version": 3,
+ "derived_from": "catalog v2 (unchanged; every v2 entry is kept verbatim). v3 only ADDS sections; each row carries added_in='v3' and a source_location relative to the unpacked-distribution directory that was read in the unpacked wheel (nothing installed or imported).",
+ "non_check_apis": [
+  {
+   "qualname": "django.core.validators (validate_* callables, *Validator classes)",
+   "package": "Django",
+   "source_location": "django/django/core/validators.py:283",
+   "reason": "Input-format validators (validate_email = EmailValidator() at 283, validate_slug 286, validate_ipv4_address 304, validate_integer 205 ...). They raise ValidationError for malformed input and compare against no stored secret: they are not authentication checks. Listed so that MintMap's 'verification-looking call' heuristic does not report them as unrecognized checks.",
+   "added_in": "v2"
+  },
+  {
+   "qualname": "django.contrib.auth.password_validation.validate_password",
+   "package": "Django",
+   "source_location": "django/django/contrib/auth/password_validation.py:41",
+   "reason": "Password STRENGTH policy (AUTH_PASSWORD_VALIDATORS) for a new password; it does not check a password against the account's stored hash, so it is not an authentication check.",
+   "added_in": "v2"
+  },
+  {
+   "qualname": "fido2.server.Fido2Server.authenticate_begin / register_begin",
+   "package": "fido2 (python-fido2)",
+   "source_location": "fido2/fido2/server.py:280",
+   "reason": "Challenge generation: returns (request options, state) for a later authenticate_complete (280-322; register_begin 158-224). Nothing is verified; the name only looks like a check.",
+   "added_in": "v2"
+  }
+ ],
+ "library_url_routes": [
+  {
+   "include": "django.contrib.admin.site.urls",
+   "mint_ref": "django.contrib.admin.sites.AdminSite.login",
+   "route": "login/",
+   "route_kind": "path",
+   "source_location": "django/django/contrib/admin/sites.py:277",
+   "evidence": "AdminSite.get_urls: path(\"login/\", self.login, name=\"login\")",
+   "added_in": "v2"
+  },
+  {
+   "include": "django.contrib.auth.urls",
+   "mint_ref": "django.contrib.auth.urls (urlpatterns)",
+   "route": "login/",
+   "route_kind": "path",
+   "source_location": "django/django/contrib/auth/urls.py:10",
+   "evidence": "path(\"login/\", views.LoginView.as_view(), name=\"login\")",
+   "added_in": "v2"
+  },
+  {
+   "include": "django.contrib.auth.urls",
+   "mint_ref": "django.contrib.auth.views.PasswordChangeView.form_valid",
+   "route": "password_change/",
+   "route_kind": "path",
+   "source_location": "django/django/contrib/auth/urls.py:13",
+   "evidence": "path(\"password_change/\", views.PasswordChangeView.as_view(), ...)",
+   "added_in": "v2"
+  },
+  {
+   "include": "django.contrib.auth.urls",
+   "mint_ref": "django.contrib.auth.forms.PasswordResetForm.save",
+   "route": "password_reset/",
+   "route_kind": "path",
+   "source_location": "django/django/contrib/auth/urls.py:20",
+   "evidence": "path(\"password_reset/\", views.PasswordResetView.as_view(), ...) (PasswordResetView.form_valid calls form.save)",
+   "added_in": "v2"
+  },
+  {
+   "include": "rest_framework.urls",
+   "mint_ref": "rest_framework.urls (browsable API login)",
+   "route": "login/",
+   "route_kind": "path",
+   "source_location": "djangorestframework/rest_framework/urls.py:19",
+   "evidence": "path('login/', views.LoginView.as_view(template_name='rest_framework/login.html'), name='login')",
+   "added_in": "v2"
+  },
+  {
+   "include": "two_factor.urls",
+   "mint_ref": "two_factor.views.core.LoginView.done",
+   "route": "account/login/",
+   "route_kind": "path",
+   "source_location": "django_two_factor_auth/two_factor/urls.py:11",
+   "evidence": "core: path('account/login/', LoginView.as_view(), name='login')",
+   "added_in": "v2"
+  },
+  {
+   "include": "two_factor.urls",
+   "mint_ref": "two_factor.views.utils.LoginStorage.authenticated_user (setter)",
+   "route": "account/login/",
+   "route_kind": "path",
+   "source_location": "django_two_factor_auth/two_factor/urls.py:11",
+   "evidence": "the wizard storage is written by LoginView (account/login/)",
+   "added_in": "v2"
+  },
+  {
+   "include": "two_factor.urls",
+   "mint_ref": "two_factor remember-device cookie (get_remember_device_cookie + set_cookie in done)",
+   "route": "account/login/",
+   "route_kind": "path",
+   "source_location": "django_two_factor_auth/two_factor/urls.py:11",
+   "evidence": "the cookie is set in LoginView.done (account/login/)",
+   "added_in": "v2"
+  },
+  {
+   "include": "two_factor.urls",
+   "mint_ref": "two_factor.views.core.SetupView.done",
+   "route": "account/two_factor/setup/",
+   "route_kind": "path",
+   "source_location": "django_two_factor_auth/two_factor/urls.py:16",
+   "evidence": "core: path('account/two_factor/setup/', SetupView.as_view(), name='setup')",
+   "added_in": "v2"
+  },
+  {
+   "include": "knox.urls",
+   "mint_ref": "knox.views.LoginView.post",
+   "route": "login/",
+   "route_kind": "path",
+   "source_location": "django_rest_knox/knox/urls.py:6",
+   "evidence": "path(r'login/', views.LoginView.as_view(), name='knox_login')",
+   "added_in": "v2"
+  },
+  {
+   "include": "hijack.urls",
+   "mint_ref": "hijack.views.AcquireUserView.post",
+   "route": "acquire/",
+   "route_kind": "path",
+   "source_location": "django_hijack/hijack/urls.py:7",
+   "evidence": "path(\"acquire/\", views.AcquireUserView.as_view(), name=\"acquire\")",
+   "added_in": "v2"
+  },
+  {
+   "include": "hijack.urls",
+   "mint_ref": "hijack.views.ReleaseUserView.post",
+   "route": "release/",
+   "route_kind": "path",
+   "source_location": "django_hijack/hijack/urls.py:8",
+   "evidence": "path(\"release/\", views.ReleaseUserView.as_view(), name=\"release\")",
+   "added_in": "v2"
+  },
+  {
+   "include": "mozilla_django_oidc.urls",
+   "mint_ref": "mozilla_django_oidc.views.OIDCAuthenticationCallbackView.get",
+   "route": "callback/",
+   "route_kind": "path",
+   "source_location": "mozilla_django_oidc/mozilla_django_oidc/urls.py:23",
+   "evidence": "path(\"callback/\", OIDCCallbackClass.as_view(), ...) (class from OIDC_CALLBACK_CLASS, default OIDCAuthenticationCallbackView)",
+   "added_in": "v2"
+  }
+ ],
+ "library_url_routes_note": "Sub-route (relative to the include point) at which the library URLconf exposes this mint flow, read in the unpacked library source. Used only to model first-match URL resolution: a project route with the same literal pattern placed earlier shadows the library route, and vice versa. Flows whose route depends on settings or on several views are not listed.",
+ "library_includes_complete": [
+  {
+   "include": "rest_framework.urls",
+   "complete": true,
+   "source_location": "djangorestframework/rest_framework/urls.py:18-21",
+   "evidence": "two routes: login/ -> views.LoginView (the catalog's browsable-API login mint) and logout/ -> views.LogoutView (ends the session, mints nothing)",
+   "added_in": "v3"
+  },
+  {
+   "include": "knox.urls",
+   "complete": true,
+   "source_location": "django_rest_knox/knox/urls.py:5-9",
+   "evidence": "login/ -> knox.views.LoginView (catalog knox.views.LoginView.post); logout/ and logoutall/ (knox/views.py:84-112) delete tokens and mint nothing",
+   "added_in": "v3"
+  },
+  {
+   "include": "hijack.urls",
+   "complete": true,
+   "source_location": "django_hijack/hijack/urls.py:6-9",
+   "evidence": "acquire/ and release/ -> AcquireUserView / ReleaseUserView, both catalog mints",
+   "added_in": "v3"
+  },
+  {
+   "include": "djoser.urls.jwt",
+   "complete": true,
+   "source_location": "djoser/djoser/urls/jwt.py:4-8",
+   "evidence": "jwt/create and jwt/refresh (catalog 'djoser.urls.jwt (jwt/create, jwt/refresh)'); jwt/verify -> simplejwt TokenVerifyView (rest_framework_simplejwt/views.py:101-110) only validates",
+   "added_in": "v3"
+  },
+  {
+   "include": "djoser.urls.authtoken",
+   "complete": true,
+   "source_location": "djoser/djoser/urls/authtoken.py:5-8",
+   "evidence": "token/login -> TokenCreateView (catalog); token/logout -> TokenDestroyView (djoser/views.py:31-39, utils.logout_user) mints nothing",
+   "added_in": "v3"
+  }
+ ],
+ "library_views_no_mint": [
+  {
+   "symbol": "django.views.generic.*",
+   "prefix": true,
+   "source_location": "django/django/views/generic/",
+   "evidence": "generic class-based views (View, TemplateView, RedirectView, FormView, Create/Update/Delete/List/DetailView): no call to login/alogin, update_session_auth_hash or any token generator in django/views/generic/*.py; form_valid saves the project's form",
+   "added_in": "v3"
+  },
+  {
+   "symbol": "django.views.View",
+   "source_location": "django/django/views/__init__.py:1",
+   "evidence": "re-export of django.views.generic.base.View",
+   "added_in": "v3"
+  },
+  {
+   "symbol": "django.views.static.serve",
+   "source_location": "django/django/views/static.py:28",
+   "evidence": "serves a file from document_root; no authentication state",
+   "added_in": "v3"
+  },
+  {
+   "symbol": "django.contrib.auth.views.LogoutView",
+   "source_location": "django/django/contrib/auth/views.py:134",
+   "evidence": "post() calls auth_logout (flushes the session); mints nothing",
+   "added_in": "v3"
+  },
+  {
+   "symbol": "django.contrib.auth.views.PasswordResetDoneView",
+   "source_location": "django/django/contrib/auth/views.py:250",
+   "evidence": "PasswordContextMixin + TemplateView: renders a template",
+   "added_in": "v3"
+  },
+  {
+   "symbol": "django.contrib.auth.views.PasswordResetCompleteView",
+   "source_location": "django/django/contrib/auth/views.py:344",
+   "evidence": "PasswordContextMixin + TemplateView: renders a template",
+   "added_in": "v3"
+  },
+  {
+   "symbol": "rest_framework.views.*",
+   "prefix": true,
+   "source_location": "djangorestframework/rest_framework/views.py",
+   "evidence": "APIView: dispatch, authentication and permission plumbing; no mint call in the module (the only 'login' text is view.login_required = False at :145)",
+   "added_in": "v3"
+  },
+  {
+   "symbol": "rest_framework.generics.*",
+   "prefix": true,
+   "source_location": "djangorestframework/rest_framework/generics.py",
+   "evidence": "GenericAPIView and concrete generic views delegate to mixins / the project's serializer",
+   "added_in": "v3"
+  },
+  {
+   "symbol": "rest_framework.viewsets.*",
+   "prefix": true,
+   "source_location": "djangorestframework/rest_framework/viewsets.py",
+   "evidence": "ViewSetMixin/ViewSet/GenericViewSet/ModelViewSet: routing plumbing; no mint call",
+   "added_in": "v3"
+  },
+  {
+   "symbol": "rest_framework.mixins.*",
+   "prefix": true,
+   "source_location": "djangorestframework/rest_framework/mixins.py",
+   "evidence": "Create/List/Retrieve/Update/DestroyModelMixin call serializer.save()/instance.delete() only",
+   "added_in": "v3"
+  },
+  {
+   "symbol": "django.contrib.auth.mixins.*",
+   "prefix": true,
+   "source_location": "django/django/contrib/auth/mixins.py",
+   "evidence": "LoginRequiredMixin / PermissionRequiredMixin / UserPassesTestMixin: access checks that redirect to login (:61); no mint",
+   "added_in": "v3"
+  },
+  {
+   "symbol": "knox.views.LogoutView",
+   "source_location": "django_rest_knox/knox/views.py:84-96",
+   "evidence": "post() deletes request._auth (the token used) and sends user_logged_out; mints nothing",
+   "review_round": "v5-review",
+   "added_in": "v3"
+  },
+  {
+   "symbol": "knox.views.LogoutAllView",
+   "source_location": "django_rest_knox/knox/views.py:98-113",
+   "evidence": "post() deletes every token of request.user; mints nothing",
+   "review_round": "v5-review",
+   "added_in": "v3"
+  },
+  {
+   "symbol": "allauth.account.views.LogoutView",
+   "source_location": "django_allauth/allauth/account/views.py:839",
+   "evidence": "post() -> LogoutFunctionalityMixin.logout -> flows.logout.logout (account/mixins.py:96-100)",
+   "added_in": "v3"
+  },
+  {
+   "symbol": "allauth.account.views.logout",
+   "source_location": "django_allauth/allauth/account/views.py:865",
+   "evidence": "logout = LogoutView.as_view()",
+   "added_in": "v3"
+  },
+  {
+   "symbol": "allauth.account.views.AccountInactiveView",
+   "source_location": "django_allauth/allauth/account/views.py:869",
+   "evidence": "TemplateView",
+   "added_in": "v3"
+  },
+  {
+   "symbol": "allauth.account.views.account_inactive",
+   "source_location": "django_allauth/allauth/account/views.py:878",
+   "evidence": "account_inactive = AccountInactiveView.as_view()",
+   "added_in": "v3"
+  },
+  {
+   "symbol": "allauth.account.views.PasswordResetDoneView",
+   "source_location": "django_allauth/allauth/account/views.py:607",
+   "evidence": "TemplateView",
+   "added_in": "v3"
+  },
+  {
+   "symbol": "allauth.account.views.password_reset_done",
+   "source_location": "django_allauth/allauth/account/views.py:616",
+   "evidence": "password_reset_done = PasswordResetDoneView.as_view()",
+   "added_in": "v3"
+  },
+  {
+   "symbol": "allauth.account.views.PasswordResetFromKeyDoneView",
+   "source_location": "django_allauth/allauth/account/views.py:713",
+   "evidence": "TemplateView",
+   "added_in": "v3"
+  },
+  {
+   "symbol": "allauth.account.views.password_reset_from_key_done",
+   "source_location": "django_allauth/allauth/account/views.py:724",
+   "evidence": "password_reset_from_key_done = PasswordResetFromKeyDoneView.as_view()",
+   "added_in": "v3"
+  },
+  {
+   "symbol": "allauth.socialaccount.views.LoginCancelledView",
+   "source_location": "django_allauth/allauth/socialaccount/views.py:90",
+   "evidence": "TemplateView",
+   "added_in": "v3"
+  },
+  {
+   "symbol": "allauth.socialaccount.views.login_cancelled",
+   "source_location": "django_allauth/allauth/socialaccount/views.py:101",
+   "evidence": "login_cancelled = LoginCancelledView.as_view()",
+   "added_in": "v3"
+  },
+  {
+   "symbol": "allauth.socialaccount.views.LoginErrorView",
+   "source_location": "django_allauth/allauth/socialaccount/views.py:104",
+   "evidence": "TemplateView rendering an error page (status 401)",
+   "added_in": "v3"
+  },
+  {
+   "symbol": "allauth.socialaccount.views.login_error",
+   "source_location": "django_allauth/allauth/socialaccount/views.py:121",
+   "evidence": "login_error = LoginErrorView.as_view()",
+   "added_in": "v3"
+  }
+ ],
+ "library_classes_no_mint": [
+  {
+   "symbol": "django.utils.deprecation.MiddlewareMixin",
+   "source_location": "django/django/utils/deprecation.py:408",
+   "evidence": "__call__ dispatches to the subclass's process_request / process_response hooks; mints nothing",
+   "added_in": "v3"
+  },
+  {
+   "symbol": "rest_framework.authentication.BaseAuthentication",
+   "source_location": "djangorestframework/rest_framework/authentication.py:33-50",
+   "evidence": "authenticate() raises NotImplementedError; authenticate_header returns None",
+   "added_in": "v3"
+  }
+ ],
+ "library_view_aliases": [
+  {
+   "symbol": "allauth.account.views.password_change",
+   "target": "allauth.account.views.PasswordChangeView",
+   "source_location": "django_allauth/allauth/account/views.py:520",
+   "added_in": "v3"
+  },
+  {
+   "symbol": "allauth.account.views.password_set",
+   "target": "allauth.account.views.PasswordSetView",
+   "source_location": "django_allauth/allauth/account/views.py:566",
+   "added_in": "v3"
+  },
+  {
+   "symbol": "allauth.account.views.password_reset",
+   "target": "allauth.account.views.PasswordResetView",
+   "source_location": "django_allauth/allauth/account/views.py:603",
+   "added_in": "v3"
+  },
+  {
+   "symbol": "allauth.account.views.password_reset_from_key",
+   "target": "allauth.account.views.PasswordResetFromKeyView",
+   "source_location": "django_allauth/allauth/account/views.py:709",
+   "added_in": "v3"
+  },
+  {
+   "symbol": "allauth.account.views.confirm_email",
+   "target": "allauth.account.views.ConfirmEmailView",
+   "source_location": "django_allauth/allauth/account/views.py:328",
+   "added_in": "v3"
+  },
+  {
+   "symbol": "allauth.mfa.base.views.authenticate",
+   "target": "allauth.mfa.base.views.AuthenticateView",
+   "source_location": "django_allauth/allauth/mfa/base/views.py:127",
+   "added_in": "v3"
+  },
+  {
+   "symbol": "allauth.socialaccount.views.signup",
+   "target": "allauth.socialaccount.views.SignupView",
+   "source_location": "django_allauth/allauth/socialaccount/views.py:86",
+   "added_in": "v3"
+  }
+ ],
+ "library_middleware_no_mint": [
+  {
+   "symbol": "django.middleware.security.SecurityMiddleware",
+   "source_location": "django/django/middleware/security.py:8",
+   "evidence": "response headers / HTTPS redirect only",
+   "added_in": "v3"
+  },
+  {
+   "symbol": "django.middleware.common.CommonMiddleware",
+   "source_location": "django/django/middleware/common.py:13",
+   "evidence": "URL normalisation (APPEND_SLASH / PREPEND_WWW), disallowed user agents",
+   "added_in": "v3"
+  },
+  {
+   "symbol": "django.middleware.csrf.CsrfViewMiddleware",
+   "source_location": "django/django/middleware/csrf.py:165",
+   "evidence": "CSRF cookie / token check; the anti-forgery token does not authenticate a user",
+   "added_in": "v3"
+  },
+  {
+   "symbol": "django.middleware.clickjacking.XFrameOptionsMiddleware",
+   "source_location": "django/django/middleware/clickjacking.py:12",
+   "evidence": "X-Frame-Options header",
+   "added_in": "v3"
+  },
+  {
+   "symbol": "django.middleware.gzip.GZipMiddleware",
+   "source_location": "django/django/middleware/gzip.py:9",
+   "evidence": "response compression",
+   "added_in": "v3"
+  },
+  {
+   "symbol": "django.middleware.locale.LocaleMiddleware",
+   "source_location": "django/django/middleware/locale.py:10",
+   "evidence": "language selection",
+   "added_in": "v3"
+  },
+  {
+   "symbol": "django.contrib.messages.middleware.MessageMiddleware",
+   "source_location": "django/django/contrib/messages/middleware.py:6",
+   "evidence": "message storage",
+   "added_in": "v3"
+  },
+  {
+   "symbol": "django.contrib.sessions.middleware.SessionMiddleware",
+   "source_location": "django/django/contrib/sessions/middleware.py:12",
+   "evidence": "loads request.session and saves it / sets the cookie; it persists whatever login() or update_session_auth_hash wrote and does not authenticate a user itself",
+   "added_in": "v3"
+  },
+  {
+   "symbol": "social_django.middleware.SocialAuthExceptionMiddleware",
+   "source_location": "social_auth_app_django/social_django/middleware.py:46",
+   "evidence": "__call__ passes through; process_exception turns SocialAuthBaseException into a message + redirect or an error page (render_error); writes no authentication state",
+   "added_in": "v3"
+  },
+  {
+   "symbol": "django_otp.middleware.OTPMiddleware",
+   "source_location": "django_otp/django_otp/middleware.py:15",
+   "evidence": "wraps request.user lazily to read the verified OTP device from the session; writes no authentication state",
+   "added_in": "v3"
+  },
+  {
+   "symbol": "two_factor.middleware.threadlocals.ThreadLocals",
+   "source_location": "django_two_factor_auth/two_factor/middleware/threadlocals.py:10",
+   "evidence": "stores the request in a thread local",
+   "added_in": "v3"
+  },
+  {
+   "symbol": "allauth.account.middleware.AccountMiddleware",
+   "source_location": "django_allauth/allauth/account/middleware.py:20-54",
+   "evidence": "sets request.allauth and the request context; turns a 404 under the accounts prefix into a redirect (:57-111); process_exception returns ImmediateHttpResponse responses and, for ReauthenticationRequired, stashes the request and redirects to reauthentication (flows.reauthentication.suspend_request); no login, no token",
+   "review_round": "v5-review",
+   "added_in": "v3"
+  }
+ ],
+ "library_drf_auth_no_mint": [
+  {
+   "symbol": "rest_framework.authentication.BasicAuthentication",
+   "source_location": "djangorestframework/rest_framework/authentication.py:53",
+   "evidence": "authenticate() -> authenticate_credentials: django authenticate(), no session, no token",
+   "added_in": "v3"
+  },
+  {
+   "symbol": "rest_framework.authentication.SessionAuthentication",
+   "source_location": "djangorestframework/rest_framework/authentication.py:112",
+   "evidence": "reads request._request.user and enforces CSRF",
+   "added_in": "v3"
+  },
+  {
+   "symbol": "rest_framework.authentication.TokenAuthentication",
+   "source_location": "djangorestframework/rest_framework/authentication.py:151",
+   "evidence": "looks the key up (authenticate_credentials :198); creates nothing",
+   "added_in": "v3"
+  },
+  {
+   "symbol": "rest_framework.authentication.RemoteUserAuthentication",
+   "source_location": "djangorestframework/rest_framework/authentication.py:214",
+   "evidence": "authenticate(remote_user=...) per request; no session login",
+   "added_in": "v3"
+  },
+  {
+   "symbol": "rest_framework_simplejwt.authentication.JWTAuthentication",
+   "source_location": "djangorestframework_simplejwt/rest_framework_simplejwt/authentication.py:27-150",
+   "evidence": "authenticate() reads the header, get_validated_token() verifies the JWT, get_user() loads the user; no token is created and no session written",
+   "review_round": "v5-review",
+   "added_in": "v3"
+  },
+  {
+   "symbol": "rest_framework_simplejwt.authentication.JWTStatelessUserAuthentication",
+   "source_location": "djangorestframework_simplejwt/rest_framework_simplejwt/authentication.py:152-160",
+   "evidence": "JWTAuthentication whose get_user() builds a TokenUser from the validated token",
+   "review_round": "v5-review",
+   "added_in": "v3"
+  },
+  {
+   "symbol": "dj_rest_auth.jwt_auth.JWTCookieAuthentication",
+   "source_location": "dj_rest_auth/dj_rest_auth-7.2.0/dj_rest_auth/jwt_auth.py:115-155",
+   "evidence": "JWTAuthentication that also reads the JWT from a cookie (with CSRF enforcement); validates only",
+   "review_round": "v5-review",
+   "added_in": "v3"
+  },
+  {
+   "symbol": "oauth2_provider.contrib.rest_framework.OAuth2Authentication",
+   "source_location": "django_oauth_toolkit/oauth2_provider/contrib/rest_framework/authentication.py:10-57",
+   "evidence": "authenticate() -> oauthlib_core.verify_request (validates the bearer token); creates nothing",
+   "review_round": "v5-review",
+   "added_in": "v3"
+  },
+  {
+   "symbol": "oauth2_provider.contrib.rest_framework.authentication.OAuth2Authentication",
+   "source_location": "django_oauth_toolkit/oauth2_provider/contrib/rest_framework/authentication.py:10-57",
+   "evidence": "same class (module path)",
+   "review_round": "v5-review",
+   "added_in": "v3"
+  }
+ ],
+ "library_admin_registrations": [
+  {
+   "app": "django.contrib.auth",
+   "source_location": "django/django/contrib/auth/admin.py:25,40",
+   "registrations": [
+    {
+     "model": "django.contrib.auth.models.Group",
+     "model_admin": "GroupAdmin",
+     "mint_ref": null
+    },
+    {
+     "model": "django.contrib.auth.models.User",
+     "model_admin": "UserAdmin",
+     "mint_ref": null,
+     "note": "its user_change_password mint is already an admin.site.urls catalog mint"
+    }
+   ],
+   "added_in": "v3"
+  },
+  {
+   "app": "django.contrib.sites",
+   "source_location": "django/django/contrib/sites/admin.py:5",
+   "registrations": [
+    {
+     "model": "django.contrib.sites.models.Site",
+     "model_admin": "SiteAdmin",
+     "mint_ref": null
+    }
+   ],
+   "added_in": "v3"
+  },
+  {
+   "app": "django.contrib.contenttypes",
+   "source_location": "django/django/contrib/contenttypes/admin.py",
+   "registrations": [],
+   "evidence": "generic inline helpers only; registers nothing",
+   "added_in": "v3"
+  },
+  {
+   "app": "django.contrib.admin",
+   "source_location": "django/django/contrib/admin/",
+   "registrations": [],
+   "evidence": "no admin.py module",
+   "added_in": "v3"
+  },
+  {
+   "app": "django.contrib.sessions",
+   "source_location": "django/django/contrib/sessions/",
+   "registrations": [],
+   "evidence": "no admin.py module",
+   "added_in": "v3"
+  },
+  {
+   "app": "django.contrib.messages",
+   "source_location": "django/django/contrib/messages/",
+   "registrations": [],
+   "evidence": "no admin.py module",
+   "added_in": "v3"
+  },
+  {
+   "app": "django.contrib.staticfiles",
+   "source_location": "django/django/contrib/staticfiles/",
+   "registrations": [],
+   "evidence": "no admin.py module",
+   "added_in": "v3"
+  },
+  {
+   "app": "django.contrib.humanize",
+   "source_location": "django/django/contrib/humanize/",
+   "registrations": [],
+   "evidence": "no admin.py module",
+   "added_in": "v3"
+  },
+  {
+   "app": "rest_framework",
+   "source_location": "djangorestframework/rest_framework/",
+   "registrations": [],
+   "evidence": "no admin.py module",
+   "added_in": "v3"
+  },
+  {
+   "app": "rest_framework.authtoken",
+   "source_location": "djangorestframework/rest_framework/authtoken/admin.py:24-25",
+   "registrations": [
+    {
+     "model": "rest_framework.authtoken.models.TokenProxy",
+     "model_admin": "TokenAdmin",
+     "mint_ref": "rest_framework.authtoken.models.Token.save / generate_key",
+     "note": "@admin.register(TokenProxy) class TokenAdmin (fields=('user',)): the add view saves a TokenProxy (a Token subclass, models.py:74), whose save() generates the key (models.py:29-37): a staff user can mint an API token for any user"
+    }
+   ],
+   "added_in": "v3"
+  },
+  {
+   "app": "allauth.headless",
+   "source_location": "django_allauth/allauth/headless/",
+   "registrations": [],
+   "evidence": "no admin.py module",
+   "added_in": "v3"
+  },
+  {
+   "app": "two_factor",
+   "source_location": "django_two_factor_auth/two_factor/admin.py:11-65",
+   "registrations": [],
+   "evidence": "defines AdminSiteOTPRequired and patch_admin(); registers no model",
+   "added_in": "v3"
+  }
+ ],
+ "library_admin_site_extra_mints": [
+  {
+   "include": "django.contrib.admin.site.urls",
+   "mint_ref": "django.contrib.auth.views.PasswordChangeView.form_valid",
+   "source_location": "django/django/contrib/admin/sites.py:279-282,351-367",
+   "evidence": "path('password_change/', wrap(self.password_change)) -> PasswordChangeView.as_view(**defaults)(request); form_valid calls update_session_auth_hash (django/contrib/auth/views.py:372)",
+   "added_in": "v3"
+  }
+ ],
+ "library_view_flows": [
+  {
+   "symbol": "allauth.account.views.PasswordChangeView",
+   "kind": "view",
+   "mint_methods": [
+    "form_valid"
+   ],
+   "mint_ref": "allauth.account.internal.flows.password_change.logout_on_password_change",
+   "source_location": "django_allauth/allauth/account/views.py:483,507-509",
+   "evidence": "form_valid -> flows.password_change.finalize_password_change -> logout_on_password_change (internal/flows/password_change.py:15-16, 45-51: update_session_auth_hash)",
+   "added_in": "v3"
+  },
+  {
+   "symbol": "allauth.account.views.PasswordSetView",
+   "kind": "view",
+   "mint_methods": [
+    "form_valid"
+   ],
+   "mint_ref": "allauth.account.internal.flows.password_change.logout_on_password_change",
+   "source_location": "django_allauth/allauth/account/views.py:530,553-555",
+   "evidence": "form_valid -> finalize_password_set -> logout_on_password_change (password_change.py:32-33)",
+   "added_in": "v3"
+  },
+  {
+   "symbol": "allauth.socialaccount.views.SignupView",
+   "kind": "view",
+   "mint_methods": [
+    "form_valid"
+   ],
+   "mint_ref": "allauth.account.internal.flows.signup.complete_signup",
+   "source_location": "django_allauth/allauth/socialaccount/views.py:36,69-70",
+   "evidence": "form_valid -> flows.signup.signup_by_form -> complete_social_signup -> complete_signup (socialaccount/internal/flows/signup.py:36-41, 137-147)",
+   "added_in": "v3"
+  },
+  {
+   "symbol": "knox.auth.TokenAuthentication",
+   "kind": "drf_auth",
+   "mint_methods": [
+    "authenticate_credentials"
+   ],
+   "mint_ref": "knox.auth.TokenAuthentication.renew_token",
+   "source_location": "django_rest_knox/knox/auth.py:77",
+   "evidence": "DRF authentication class: authenticate_credentials renews the token expiry on each request (AUTO_REFRESH); listed in DEFAULT_AUTHENTICATION_CLASSES it runs on every API request",
+   "added_in": "v3"
+  }
+ ],
+ "mint_setting_dependencies": [
+  {
+   "mint_ref": "django.contrib.auth.forms.PasswordResetForm.save",
+   "settings": [
+    "PASSWORD_RESET_TIMEOUT"
+   ],
+   "source_location": "django/django/contrib/auth/tokens.py:79",
+   "evidence": "PasswordResetTokenGenerator.check_token rejects a token older than settings.PASSWORD_RESET_TIMEOUT",
+   "added_in": "v3"
+  },
+  {
+   "mint_ref": "allauth.account.internal.flows.password_reset.perform_password_reset_login",
+   "settings": [
+    "ACCOUNT_LOGIN_ON_PASSWORD_RESET"
+   ],
+   "source_location": "django_allauth/allauth/account/internal/flows/password_reset.py:61",
+   "evidence": "finalize_password_reset logs the user in only if app_settings.LOGIN_ON_PASSWORD_RESET (account/app_settings.py:417, prefix ACCOUNT_)",
+   "added_in": "v3"
+  },
+  {
+   "mint_ref": "allauth.account.internal.flows.email_verification.login_on_verification",
+   "settings": [
+    "ACCOUNT_LOGIN_ON_EMAIL_CONFIRMATION"
+   ],
+   "source_location": "django_allauth/allauth/account/internal/flows/email_verification.py:136",
+   "evidence": "login_on_verification returns without login when not app_settings.LOGIN_ON_EMAIL_CONFIRMATION (account/app_settings.py:410)",
+   "added_in": "v3"
+  },
+  {
+   "mint_ref": "allauth.account.internal.flows.password_change.logout_on_password_change",
+   "settings": [
+    "ACCOUNT_LOGOUT_ON_PASSWORD_CHANGE"
+   ],
+   "source_location": "django_allauth/allauth/account/internal/flows/password_change.py:50",
+   "evidence": "update_session_auth_hash only if not app_settings.LOGOUT_ON_PASSWORD_CHANGE (account/app_settings.py:435)",
+   "added_in": "v3"
+  },
+  {
+   "mint_ref": "allauth.account.stages.LoginStageController.handle + internal.stagekit.stash_login",
+   "settings": [
+    "ACCOUNT_LOGIN_TIMEOUT"
+   ],
+   "source_location": "django_allauth/allauth/account/internal/stagekit.py:57",
+   "evidence": "a stashed (MFA-pending) login expires after app_settings.LOGIN_TIMEOUT (account/app_settings.py:579)",
+   "added_in": "v3"
+  },
+  {
+   "mint_ref": "allauth.socialaccount.internal.flows.login._login",
+   "settings": [
+    "SOCIALACCOUNT_EMAIL_AUTHENTICATION"
+   ],
+   "source_location": "django_allauth/allauth/socialaccount/adapter.py:392",
+   "evidence": "email authentication (log in an existing account by a provider-verified email) is decided by app_settings.EMAIL_AUTHENTICATION (socialaccount/app_settings.py:98)",
+   "added_in": "v3"
+  },
+  {
+   "mint_ref": "two_factor.views.utils.LoginStorage.authenticated_user (setter)",
+   "settings": [
+    "TWO_FACTOR_LOGIN_TIMEOUT"
+   ],
+   "source_location": "django_two_factor_auth/two_factor/views/core.py:115",
+   "evidence": "the stored first-step user expires after getattr(settings, 'TWO_FACTOR_LOGIN_TIMEOUT', 600)",
+   "added_in": "v3"
+  },
+  {
+   "mint_ref": "two_factor remember-device cookie (get_remember_device_cookie + set_cookie in done)",
+   "settings": [
+    "TWO_FACTOR_REMEMBER_COOKIE_AGE"
+   ],
+   "source_location": "django_two_factor_auth/two_factor/views/core.py:181,187; two_factor/views/utils.py:261",
+   "evidence": "the remember-device cookie is set and accepted only while TWO_FACTOR_REMEMBER_COOKIE_AGE allows",
+   "added_in": "v3"
+  },
+  {
+   "mint_ref": "social_django.views._do_login",
+   "settings": [
+    "SOCIAL_AUTH_SESSION_EXPIRATION"
+   ],
+   "source_location": "social_auth_app_django/social_django/views.py:306; social_core/utils.py:131-132",
+   "evidence": "backend.setting('SESSION_EXPIRATION') (strategy setting names are prefixed SOCIAL_AUTH_)",
+   "added_in": "v3"
+  },
+  {
+   "mint_ref": "hijack.views.AcquireUserView.post",
+   "settings": [
+    "HIJACK_PERMISSION_CHECK"
+   ],
+   "source_location": "django_hijack/hijack/views.py:77-79; hijack/conf.py:7",
+   "evidence": "test_func imports settings.HIJACK_PERMISSION_CHECK and calls it (default superusers_only)",
+   "added_in": "v3"
+  }
+ ],
+ "library_hook_settings": [
+  {
+   "setting": "ACCOUNT_ADAPTER",
+   "package": "allauth",
+   "kind": "class",
+   "applies_to": [
+    "allauth"
+   ],
+   "project_calls": true,
+   "default": "allauth.account.adapter.DefaultAccountAdapter",
+   "source_location": "django_allauth/allauth/account/app_settings.py:398-399; account/adapter.py:1084-1085",
+   "evidence": "get_adapter() = import_string(app_settings.ADAPTER)(request); account flows call its pre_authenticate, authenticate, login, is_open_for_signup, save_user ...",
+   "added_in": "v3"
+  },
+  {
+   "setting": "SOCIALACCOUNT_ADAPTER",
+   "package": "allauth",
+   "kind": "class",
+   "applies_to": [
+    "allauth"
+   ],
+   "project_calls": true,
+   "default": "allauth.socialaccount.adapter.DefaultSocialAccountAdapter",
+   "source_location": "django_allauth/allauth/socialaccount/app_settings.py:131-136; socialaccount/adapter.py:430-431",
+   "evidence": "get_adapter() = import_string(app_settings.ADAPTER)(request): pre_social_login, is_auto_signup_allowed, populate_user ...",
+   "added_in": "v3"
+  },
+  {
+   "setting": "MFA_ADAPTER",
+   "package": "allauth",
+   "kind": "class",
+   "applies_to": [
+    "allauth"
+   ],
+   "project_calls": true,
+   "default": "allauth.mfa.adapter.DefaultMFAAdapter",
+   "source_location": "django_allauth/allauth/mfa/app_settings.py:20-21; mfa/adapter.py:164-165",
+   "evidence": "get_adapter() = import_string(app_settings.ADAPTER)(): is_mfa_enabled decides the MFA stage",
+   "added_in": "v3"
+  },
+  {
+   "setting": "HEADLESS_ADAPTER",
+   "package": "allauth",
+   "kind": "class",
+   "applies_to": [
+    "allauth"
+   ],
+   "project_calls": true,
+   "default": "allauth.headless.adapter.DefaultHeadlessAdapter",
+   "source_location": "django_allauth/allauth/headless/app_settings.py:19-22; headless/adapter.py:149-150",
+   "evidence": "get_adapter() = import_string(app_settings.ADAPTER)()",
+   "added_in": "v3"
+  },
+  {
+   "setting": "HEADLESS_TOKEN_STRATEGY",
+   "package": "allauth",
+   "kind": "class",
+   "applies_to": [
+    "allauth"
+   ],
+   "project_calls": true,
+   "default": "allauth.headless.tokens.strategies.sessions.SessionTokenStrategy",
+   "source_location": "django_allauth/allauth/headless/app_settings.py:25-33; headless/internal/authkit.py:62,94",
+   "evidence": "TOKEN_STRATEGY = import_string(path)(); expose_access_token / create_session_token call it",
+   "added_in": "v3"
+  },
+  {
+   "setting": "ACCOUNT_FORMS",
+   "package": "allauth",
+   "kind": "class_map",
+   "applies_to": [
+    "allauth"
+   ],
+   "default": {},
+   "source_location": "django_allauth/allauth/account/app_settings.py:472-473; allauth/utils.py:210-214",
+   "evidence": "get_form_class(app_settings.FORMS, form_id, default) imports the project form (login, signup, reset_password_from_key ...): its clean methods run inside the library view",
+   "added_in": "v3"
+  },
+  {
+   "setting": "SOCIALACCOUNT_FORMS",
+   "package": "allauth",
+   "kind": "class_map",
+   "applies_to": [
+    "allauth"
+   ],
+   "default": {},
+   "source_location": "django_allauth/allauth/socialaccount/app_settings.py:138-139; allauth/utils.py:210-214",
+   "evidence": "as ACCOUNT_FORMS for the social signup / disconnect forms",
+   "added_in": "v3"
+  },
+  {
+   "setting": "MFA_FORMS",
+   "package": "allauth",
+   "kind": "class_map",
+   "applies_to": [
+    "allauth"
+   ],
+   "default": {},
+   "source_location": "django_allauth/allauth/mfa/app_settings.py:28-29; allauth/utils.py:210-214",
+   "evidence": "as ACCOUNT_FORMS for the MFA authenticate / reauthenticate forms",
+   "added_in": "v3"
+  },
+  {
+   "setting": "ACCOUNT_SIGNUP_FORM_CLASS",
+   "package": "allauth",
+   "kind": "class",
+   "applies_to": [
+    "allauth"
+   ],
+   "default": null,
+   "source_location": "django_allauth/allauth/account/app_settings.py:322-326; account/internal/flows/signup.py:40-43",
+   "evidence": "the project signup form class is imported and its signup(request, user) runs during signup",
+   "added_in": "v3"
+  },
+  {
+   "setting": "REST_FRAMEWORK",
+   "key": "DEFAULT_AUTHENTICATION_CLASSES",
+   "package": "rest_framework",
+   "kind": "class_list",
+   "applies_to": [
+    "drf_views",
+    "rest_framework",
+    "knox",
+    "rest_framework_simplejwt",
+    "dj_rest_auth",
+    "djoser"
+   ],
+   "default": [
+    "rest_framework.authentication.SessionAuthentication",
+    "rest_framework.authentication.BasicAuthentication"
+   ],
+   "source_location": "djangorestframework/rest_framework/settings.py:40-43,137-141; rest_framework/views.py:110",
+   "evidence": "APIView.authentication_classes = api_settings.DEFAULT_AUTHENTICATION_CLASSES (imported strings): authenticate() decides request.user for every view that does not set the attribute",
+   "added_in": "v3"
+  },
+  {
+   "setting": "REST_FRAMEWORK",
+   "key": "DEFAULT_PERMISSION_CLASSES",
+   "package": "rest_framework",
+   "kind": "class_list",
+   "applies_to": [
+    "drf_views",
+    "rest_framework",
+    "knox",
+    "rest_framework_simplejwt",
+    "dj_rest_auth",
+    "djoser"
+   ],
+   "default": [
+    "rest_framework.permissions.AllowAny"
+   ],
+   "source_location": "djangorestframework/rest_framework/settings.py:44-46,137-141; rest_framework/views.py:112",
+   "evidence": "APIView.permission_classes = api_settings.DEFAULT_PERMISSION_CLASSES: has_permission gates every view that does not set the attribute",
+   "added_in": "v3"
+  },
+  {
+   "setting": "SIMPLE_JWT",
+   "key": "TOKEN_OBTAIN_SERIALIZER",
+   "package": "rest_framework_simplejwt",
+   "kind": "class",
+   "applies_to": [
+    "rest_framework_simplejwt"
+   ],
+   "default": "rest_framework_simplejwt.serializers.TokenObtainPairSerializer",
+   "source_location": "djangorestframework_simplejwt/rest_framework_simplejwt/settings.py:39; views.py:23-31,59",
+   "evidence": "TokenObtainPairView._serializer_class = api_settings.TOKEN_OBTAIN_SERIALIZER, imported by get_serializer_class: its validate() authenticates and issues the pair",
+   "added_in": "v3"
+  },
+  {
+   "setting": "SIMPLE_JWT",
+   "key": "TOKEN_REFRESH_SERIALIZER",
+   "package": "rest_framework_simplejwt",
+   "kind": "class",
+   "applies_to": [
+    "rest_framework_simplejwt"
+   ],
+   "default": "rest_framework_simplejwt.serializers.TokenRefreshSerializer",
+   "source_location": "djangorestframework_simplejwt/rest_framework_simplejwt/settings.py:40; views.py:71",
+   "evidence": "TokenRefreshView._serializer_class",
+   "added_in": "v3"
+  },
+  {
+   "setting": "SIMPLE_JWT",
+   "key": "SLIDING_TOKEN_OBTAIN_SERIALIZER",
+   "package": "rest_framework_simplejwt",
+   "kind": "class",
+   "applies_to": [
+    "rest_framework_simplejwt"
+   ],
+   "default": "rest_framework_simplejwt.serializers.TokenObtainSlidingSerializer",
+   "source_location": "djangorestframework_simplejwt/rest_framework_simplejwt/settings.py:43; views.py:83",
+   "evidence": "TokenObtainSlidingView._serializer_class",
+   "added_in": "v3"
+  },
+  {
+   "setting": "SIMPLE_JWT",
+   "key": "SLIDING_TOKEN_REFRESH_SERIALIZER",
+   "package": "rest_framework_simplejwt",
+   "kind": "class",
+   "applies_to": [
+    "rest_framework_simplejwt"
+   ],
+   "default": "rest_framework_simplejwt.serializers.TokenRefreshSlidingSerializer",
+   "source_location": "djangorestframework_simplejwt/rest_framework_simplejwt/settings.py:44; views.py:95",
+   "evidence": "TokenRefreshSlidingView._serializer_class",
+   "added_in": "v3"
+  },
+  {
+   "setting": "SIMPLE_JWT",
+   "key": "USER_AUTHENTICATION_RULE",
+   "package": "rest_framework_simplejwt",
+   "kind": "function",
+   "applies_to": [
+    "rest_framework_simplejwt"
+   ],
+   "default": "rest_framework_simplejwt.authentication.default_user_authentication_rule",
+   "source_location": "djangorestframework_simplejwt/rest_framework_simplejwt/settings.py:31,54; serializers.py:56,120",
+   "evidence": "TokenObtainSerializer.validate: if not api_settings.USER_AUTHENTICATION_RULE(self.user): fail",
+   "added_in": "v3"
+  },
+  {
+   "setting": "REST_AUTH",
+   "key": "LOGIN_SERIALIZER",
+   "package": "dj_rest_auth",
+   "kind": "class",
+   "applies_to": [
+    "dj_rest_auth"
+   ],
+   "default": "dj_rest_auth.serializers.LoginSerializer",
+   "source_location": "dj_rest_auth/dj_rest_auth-7.2.0/dj_rest_auth/app_settings.py:9,66; views.py:39",
+   "evidence": "LoginView.serializer_class = api_settings.LOGIN_SERIALIZER (imported string)",
+   "added_in": "v3"
+  },
+  {
+   "setting": "REST_AUTH",
+   "key": "TOKEN_CREATOR",
+   "package": "dj_rest_auth",
+   "kind": "function",
+   "applies_to": [
+    "dj_rest_auth"
+   ],
+   "default": "dj_rest_auth.utils.default_create_token",
+   "source_location": "dj_rest_auth/dj_rest_auth-7.2.0/dj_rest_auth/app_settings.py:24,59; views.py:72",
+   "evidence": "LoginView.login: self.token = api_settings.TOKEN_CREATOR(token_model, self.user, serializer)",
+   "added_in": "v3"
+  },
+  {
+   "setting": "REST_AUTH",
+   "key": "JWT_TOKEN_CLAIMS_SERIALIZER",
+   "package": "dj_rest_auth",
+   "kind": "class",
+   "applies_to": [
+    "dj_rest_auth"
+   ],
+   "default": "rest_framework_simplejwt.serializers.TokenObtainPairSerializer",
+   "source_location": "dj_rest_auth/dj_rest_auth-7.2.0/dj_rest_auth/app_settings.py:13,64; utils.py:12",
+   "evidence": "jwt_encode builds the tokens with api_settings.JWT_TOKEN_CLAIMS_SERIALIZER.get_token(user)",
+   "added_in": "v3"
+  },
+  {
+   "setting": "REST_AUTH",
+   "key": "REGISTER_SERIALIZER",
+   "package": "dj_rest_auth",
+   "kind": "class",
+   "applies_to": [
+    "dj_rest_auth"
+   ],
+   "default": "dj_rest_auth.registration.serializers.RegisterSerializer",
+   "source_location": "dj_rest_auth/dj_rest_auth-7.2.0/dj_rest_auth/app_settings.py:19,70; registration/views.py:40",
+   "evidence": "RegisterView.serializer_class = api_settings.REGISTER_SERIALIZER",
+   "added_in": "v3"
+  },
+  {
+   "setting": "DJOSER",
+   "key": "SERIALIZERS",
+   "package": "djoser",
+   "kind": "class_map",
+   "applies_to": [
+    "djoser"
+   ],
+   "default": {},
+   "source_location": "djoser/djoser/conf.py:45-67; djoser/views.py:20",
+   "evidence": "TokenCreateView.serializer_class = settings.SERIALIZERS.token_create (dotted paths imported lazily); user_create, password_reset_confirm ... likewise",
+   "added_in": "v3"
+  },
+  {
+   "setting": "DJOSER",
+   "key": "PERMISSIONS",
+   "package": "djoser",
+   "kind": "class_list_map",
+   "applies_to": [
+    "djoser"
+   ],
+   "default": {},
+   "source_location": "djoser/djoser/conf.py:87; djoser/views.py:21,35,45",
+   "evidence": "TokenCreateView.permission_classes = settings.PERMISSIONS.token_create ...",
+   "added_in": "v3"
+  },
+  {
+   "setting": "SOCIAL_AUTH_PIPELINE",
+   "package": "social_django",
+   "kind": "function_list",
+   "applies_to": [
+    "social_django",
+    "social_core"
+   ],
+   "project_calls": true,
+   "default": null,
+   "source_location": "social_auth_core/social_core/strategy.py:196-199; social_core/utils.py:131-132",
+   "evidence": "get_pipeline() = setting('PIPELINE', DEFAULT_AUTH_PIPELINE) (prefixed SOCIAL_AUTH_): every function runs during the social login and decides / creates the user that is logged in",
+   "added_in": "v3"
+  },
+  {
+   "setting": "HIJACK_PERMISSION_CHECK",
+   "package": "hijack",
+   "kind": "function",
+   "applies_to": [
+    "hijack"
+   ],
+   "default": "hijack.permissions.superusers_only",
+   "source_location": "django_hijack/hijack/conf.py:7; hijack/views.py:77-79",
+   "evidence": "AcquireUserView.test_func: import_string(settings.HIJACK_PERMISSION_CHECK)(hijacker=..., hijacked=...) decides who may impersonate whom",
+   "added_in": "v3"
+  },
+  {
+   "setting": "OAUTH2_PROVIDER",
+   "key": "OAUTH2_VALIDATOR_CLASS",
+   "package": "oauth2_provider",
+   "kind": "class",
+   "applies_to": [
+    "oauth2_provider"
+   ],
+   "default": "oauth2_provider.oauth2_validators.OAuth2Validator",
+   "source_location": "django_oauth_toolkit/oauth2_provider/settings.py:55,211; oauth2_provider/views/mixins.py:55",
+   "evidence": "the validator class validates clients, grants and users before tokens are issued",
+   "added_in": "v3"
+  },
+  {
+   "setting": "REST_AUTH_SERIALIZERS",
+   "key": "LOGIN_SERIALIZER",
+   "package": "dj_rest_auth",
+   "kind": "class",
+   "applies_to": [
+    "dj_rest_auth"
+   ],
+   "default": "dj_rest_auth.serializers.LoginSerializer",
+   "versions": "<3.0",
+   "source_location": "dj_rest_auth_legacy/dj-rest-auth-2.2.8/dj_rest_auth/app_settings.py:27,37; dj_rest_auth/views.py:47",
+   "evidence": "LoginView.serializer_class = LoginSerializer = import_callable(REST_AUTH_SERIALIZERS['LOGIN_SERIALIZER']): its validate() authenticates the user before login / token creation",
+   "review_round": "v5-review",
+   "added_in": "v3"
+  },
+  {
+   "setting": "REST_AUTH_TOKEN_CREATOR",
+   "package": "dj_rest_auth",
+   "kind": "function",
+   "applies_to": [
+    "dj_rest_auth"
+   ],
+   "default": "dj_rest_auth.utils.default_create_token",
+   "versions": "<3.0",
+   "source_location": "dj_rest_auth_legacy/dj-rest-auth-2.2.8/dj_rest_auth/app_settings.py:25",
+   "evidence": "create_token = import_callable(REST_AUTH_TOKEN_CREATOR) creates the API token at login",
+   "review_round": "v5-review",
+   "added_in": "v3"
+  },
+  {
+   "setting": "REST_AUTH_REGISTER_SERIALIZERS",
+   "key": "REGISTER_SERIALIZER",
+   "package": "dj_rest_auth",
+   "kind": "class",
+   "applies_to": [
+    "dj_rest_auth"
+   ],
+   "default": "dj_rest_auth.registration.serializers.RegisterSerializer",
+   "versions": "<3.0",
+   "source_location": "dj_rest_auth_legacy/dj-rest-auth-2.2.8/dj_rest_auth/registration/app_settings.py:11,13",
+   "evidence": "RegisterView.serializer_class: its save() creates the user that is then logged in",
+   "review_round": "v5-review",
+   "added_in": "v3"
+  },
+  {
+   "setting": "AUTHENTICATION_BACKENDS",
+   "package": "django",
+   "kind": "class_list",
+   "applies_to": [
+    "django",
+    "allauth",
+    "rest_framework",
+    "rest_framework_simplejwt",
+    "dj_rest_auth",
+    "djoser",
+    "knox",
+    "two_factor",
+    "sesame",
+    "social_django",
+    "mozilla_django_oidc",
+    "oauth2_provider"
+   ],
+   "purposes": [
+    "full_session",
+    "api_token",
+    "jwt_refresh",
+    "jwt_access",
+    "mfa_challenge_state"
+   ],
+   "library_flows_only": true,
+   "default": [
+    "django.contrib.auth.backends.ModelBackend"
+   ],
+   "source_location": "django/django/contrib/auth/__init__.py:26-28,124",
+   "evidence": "authenticate() tries every backend of settings.AUTHENTICATION_BACKENDS: a project backend's authenticate decides the user of every library login flow",
+   "added_in": "v3"
+  }
+ ],
+ "library_mint_calls": [
+  {
+   "qualname": "channels.auth.login",
+   "symbols": [
+    "channels.auth.login"
+   ],
+   "package": "channels",
+   "purpose": "full_session",
+   "source_location": "channels/channels/auth.py:58-110",
+   "evidence": "websocket login: flushes or cycles the session key (:85-93) and writes SESSION_KEY / BACKEND_SESSION_KEY / HASH_SESSION_KEY into scope['session'] (:106-108); the consumer must save the session (scope['session'].save()); the same session cookie then authenticates HTTP requests",
+   "review_round": "v5-review",
+   "added_in": "v3"
+  }
+ ],
+ "library_credential_models": [
+  {
+   "model": "oauth2_provider.models.AccessToken",
+   "fields": [
+    "token"
+   ],
+   "purpose": "oauth_access_token",
+   "source_location": "django_oauth_toolkit/oauth2_provider/models.py:589-623,738",
+   "evidence": "AbstractAccessToken.token (TextField) is the bearer token OAuth2Authentication / OAuth2TokenMiddleware accept for `user`",
+   "review_round": "v5-review",
+   "added_in": "v3"
+  },
+  {
+   "model": "oauth2_provider.models.RefreshToken",
+   "fields": [
+    "token"
+   ],
+   "purpose": "oauth_refresh_token",
+   "source_location": "django_oauth_toolkit/oauth2_provider/models.py:743-766,887",
+   "evidence": "AbstractRefreshToken.token is exchanged for new access tokens",
+   "review_round": "v5-review",
+   "added_in": "v3"
+  },
+  {
+   "model": "oauth2_provider.models.Grant",
+   "fields": [
+    "code"
+   ],
+   "purpose": "oauth_authorization_code",
+   "source_location": "django_oauth_toolkit/oauth2_provider/models.py:495-525,584",
+   "evidence": "AbstractGrant.code is exchanged for tokens at the token endpoint",
+   "review_round": "v5-review",
+   "added_in": "v3"
+  },
+  {
+   "model": "oauth2_provider.models.IDToken",
+   "fields": [
+    "jti"
+   ],
+   "purpose": "oauth_id_token",
+   "source_location": "django_oauth_toolkit/oauth2_provider/models.py:892-918,986",
+   "evidence": "OIDC ID token record (jti default uuid4)",
+   "review_round": "v5-review",
+   "added_in": "v3"
+  },
+  {
+   "model": "oauth2_provider.models.Application",
+   "fields": [
+    "client_secret"
+   ],
+   "purpose": "oauth_client_credentials",
+   "source_location": "django_oauth_toolkit/oauth2_provider/models.py:126-224,485",
+   "evidence": "AbstractApplication.client_secret (ClientSecretField, generated default) authenticates the client; with the client-credentials grant it is a credential for the application's user",
+   "review_round": "v5-review",
+   "added_in": "v3"
+  }
+ ],
+ "verified_package_versions": [
+  {
+   "dist": "channels",
+   "versions": [
+    "4.3.2"
+   ],
+   "source_location": "channels/channels-4.3.2.dist-info/METADATA:3",
+   "added_in": "v3",
+   "review_round": "v5-review"
+  },
+  {
+   "dist": "dj-rest-auth",
+   "versions": [
+    "7.2.0"
+   ],
+   "source_location": "dj_rest_auth/dj_rest_auth-7.2.0/PKG-INFO:3",
+   "added_in": "v3",
+   "review_round": "v5-review"
+  },
+  {
+   "dist": "django",
+   "versions": [
+    "6.1.2",
+    "5.2.17"
+   ],
+   "source_location": "django/django-6.1.2.dist-info/METADATA:3; ../../pin-django-5.2.17/src/django-5.2.17.dist-info/METADATA:3",
+   "added_in": "v3",
+   "review_round": "v5-review"
+  },
+  {
+   "dist": "django-allauth",
+   "versions": [
+    "65.20.0",
+    "65.16.1"
+   ],
+   "source_location": "django_allauth/django_allauth-65.20.0.dist-info/METADATA:3; ../../pin-django-allauth-65.16.1/src/django_allauth-65.16.1.dist-info/METADATA:3",
+   "added_in": "v3",
+   "review_round": "v5-review"
+  },
+  {
+   "dist": "django-formtools",
+   "versions": [
+    "2.7"
+   ],
+   "source_location": "django_formtools/django_formtools-2.7.dist-info/METADATA:3",
+   "added_in": "v3",
+   "review_round": "v5-review"
+  },
+  {
+   "dist": "django-guardian",
+   "versions": [
+    "3.5.1"
+   ],
+   "source_location": "django_guardian/django_guardian-3.5.1.dist-info/METADATA:3",
+   "added_in": "v3",
+   "review_round": "v5-review"
+  },
+  {
+   "dist": "django-hijack",
+   "versions": [
+    "3.7.9"
+   ],
+   "source_location": "django_hijack/django_hijack-3.7.9.dist-info/METADATA:3",
+   "added_in": "v3",
+   "review_round": "v5-review"
+  },
+  {
+   "dist": "django-oauth-toolkit",
+   "versions": [
+    "3.4.1"
+   ],
+   "source_location": "django_oauth_toolkit/django_oauth_toolkit-3.4.1.dist-info/METADATA:3",
+   "added_in": "v3",
+   "review_round": "v5-review"
+  },
+  {
+   "dist": "django-otp",
+   "versions": [
+    "1.7.5"
+   ],
+   "source_location": "django_otp/django_otp-1.7.5.dist-info/METADATA:3",
+   "added_in": "v3",
+   "review_round": "v5-review"
+  },
+  {
+   "dist": "django-rest-knox",
+   "versions": [
+    "5.1.0"
+   ],
+   "source_location": "django_rest_knox/django_rest_knox-5.1.0.dist-info/METADATA:3",
+   "added_in": "v3",
+   "review_round": "v5-review"
+  },
+  {
+   "dist": "django-sesame",
+   "versions": [
+    "3.2.5"
+   ],
+   "source_location": "django_sesame/django_sesame-3.2.5.dist-info/METADATA:3",
+   "added_in": "v3",
+   "review_round": "v5-review"
+  },
+  {
+   "dist": "django-two-factor-auth",
+   "versions": [
+    "1.18.1"
+   ],
+   "source_location": "django_two_factor_auth/django_two_factor_auth-1.18.1.dist-info/METADATA:3",
+   "added_in": "v3",
+   "review_round": "v5-review"
+  },
+  {
+   "dist": "djangorestframework",
+   "versions": [
+    "3.18.3",
+    "3.18.1"
+   ],
+   "source_location": "djangorestframework/djangorestframework-3.18.3.dist-info/METADATA:3; ../../pin-djangorestframework-3.18.1/src/djangorestframework-3.18.1.dist-info/METADATA:3",
+   "added_in": "v3",
+   "review_round": "v5-review"
+  },
+  {
+   "dist": "djangorestframework-simplejwt",
+   "versions": [
+    "5.5.1"
+   ],
+   "source_location": "djangorestframework_simplejwt/djangorestframework_simplejwt-5.5.1.dist-info/METADATA:3",
+   "added_in": "v3",
+   "review_round": "v5-review"
+  },
+  {
+   "dist": "djoser",
+   "versions": [
+    "2.3.5"
+   ],
+   "source_location": "djoser/djoser-2.3.5.dist-info/METADATA:3",
+   "added_in": "v3",
+   "review_round": "v5-review"
+  },
+  {
+   "dist": "fido2",
+   "versions": [
+    "2.2.1"
+   ],
+   "source_location": "fido2/fido2-2.2.1.dist-info/METADATA:3",
+   "added_in": "v3",
+   "review_round": "v5-review"
+  },
+  {
+   "dist": "mozilla-django-oidc",
+   "versions": [
+    "5.0.2"
+   ],
+   "source_location": "mozilla_django_oidc/mozilla_django_oidc-5.0.2.dist-info/METADATA:3",
+   "added_in": "v3",
+   "review_round": "v5-review"
+  },
+  {
+   "dist": "pyjwt",
+   "versions": [
+    "2.15.1"
+   ],
+   "source_location": "pyjwt/pyjwt-2.15.1.dist-info/METADATA:3",
+   "added_in": "v3",
+   "review_round": "v5-review"
+  },
+  {
+   "dist": "pyotp",
+   "versions": [
+    "2.10.0"
+   ],
+   "source_location": "pyotp/pyotp-2.10.0.dist-info/METADATA:3",
+   "added_in": "v3",
+   "review_round": "v5-review"
+  },
+  {
+   "dist": "social-auth-app-django",
+   "versions": [
+    "7.1.0"
+   ],
+   "source_location": "social_auth_app_django/social_auth_app_django-7.1.0.dist-info/METADATA:3",
+   "added_in": "v3",
+   "review_round": "v5-review"
+  },
+  {
+   "dist": "social-auth-core",
+   "versions": [
+    "6.1.1"
+   ],
+   "source_location": "social_auth_core/social_auth_core-6.1.1.dist-info/METADATA:3",
+   "added_in": "v3",
+   "review_round": "v5-review"
+  },
+  {
+   "dist": "webauthn",
+   "versions": [
+    "3.0.1"
+   ],
+   "source_location": "webauthn/webauthn-3.0.1.dist-info/METADATA:3",
+   "added_in": "v3",
+   "review_round": "v5-review"
+  }
+ ],
+ "v3_note": "v3 sections are used by MintMap v5 to tell 'known not to mint' and 'mint list complete' apart from 'unknown'. Anything a catalogued package exposes that these sections do not declare is reported as a gap (no silent 'covered by the catalog' assumption)."
+}

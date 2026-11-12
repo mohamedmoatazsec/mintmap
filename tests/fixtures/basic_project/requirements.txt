@@ -1,0 +1,4 @@
+Django==5.2.17  # web framework
+django-allauth==65.16.1
+django-otp==1.7.3
+requests>=2
