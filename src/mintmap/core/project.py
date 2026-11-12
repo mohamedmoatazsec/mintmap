@@ -413,7 +413,9 @@ class Project:
             nxt = []
             for mod in pending:
                 refs = self._imported_names(mod)
-                if helpers:
+                leaf = mod.name.rsplit(".", 1)[-1]
+                if helpers and ("settings" in leaf or "urls" in leaf or leaf in ("apps", "conf", "config")):
+                    # dotted strings that name modules live in settings, URLconfs and app configs
                     refs |= self._string_refs(mod) & helpers
                 for name in sorted(refs):
                     for ap, rel, reason, tree in excluded.pop(name, []):

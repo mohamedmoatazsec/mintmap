@@ -3775,14 +3775,16 @@ class Analysis:
         info = self.p.functions.get(fq)
         if info is None or info.cls or info.node.decorator_list or "." not in fq:
             return False
-        if info.module in self.dynamic_dispatch_modules():
-            return False      # (v6c) `getattr(keys, f"make_{kind}_token")()`: any function of it may be called
         if self._name_refs is None:
             refs: dict = {}
+            dyn = []
             for mname, mod in self.p.modules.items():
                 if ".migrations." in f".{mname}.":
                     continue
                 for n in ast.walk(mod.tree):
+                    if isinstance(n, (ast.Call, ast.Subscript)):
+                        dyn.append((mname, n))       # (v6c) candidates for dynamic_dispatch_modules
+                        continue
                     if isinstance(n, ast.Name):
                         k = n.id
                     elif isinstance(n, ast.Attribute):
@@ -3796,7 +3798,11 @@ class Analysis:
                         continue
                     refs[k] = refs.get(k, 0) + 1
             self._name_refs = refs
-        return not self._name_refs.get(fq.rsplit(".", 1)[-1])
+            self._dyn_nodes = dyn
+        if self._name_refs.get(fq.rsplit(".", 1)[-1]):
+            return False
+        # (v6c) `getattr(keys, f"make_{kind}_token")()`: any function of that module may be called
+        return info.module not in self.dynamic_dispatch_modules()
 
     def url_lists_filled_at_run_time(self, up) -> list:
         """(v6c) Gaps for URL lists that a URLconf's `urlpatterns` is built from but that project code extends inside a
@@ -3823,7 +3829,10 @@ class Analysis:
         out = []
         if not lists:
             return out
+        names = {q.rsplit(".", 1)[-1] for q in lists}
         for fq, info in self.p.functions.items():
+            if not self.cred.mentions(info) & names:
+                continue
             for n in self.p.walk_function_body(info.node):
                 if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute) and \
                         n.func.attr in ("append", "extend", "insert", "__iadd__") and \
@@ -3849,8 +3858,12 @@ class Analysis:
 
         def const(e):
             return isinstance(e, ast.Constant) and isinstance(e.value, str)
-        for mname, mod in self.p.modules.items():
-            for n in ast.walk(mod.tree):
+        nodes = getattr(self, "_dyn_nodes", None)
+        if nodes is None:
+            nodes = [(mname, n) for mname, mod in self.p.modules.items() for n in ast.walk(mod.tree)
+                     if isinstance(n, (ast.Call, ast.Subscript))]
+        for mname, n in nodes:
+            if True:
                 target = None
                 if isinstance(n, ast.Call) and isinstance(n.func, ast.Name) and len(n.args) >= 2 and \
                         n.func.id == "getattr" and not const(n.args[1]):
