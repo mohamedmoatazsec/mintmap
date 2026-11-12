@@ -2633,7 +2633,9 @@ class Analysis:
                                     fq = self._def_qualname(mname, n)
                                     if fq:
                                         out.setdefault(fq, f"receiver of the signal {q}")
-                elif isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute):
+                elif isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute) and \
+                        (n.func.attr == "connect" or _w(n.func.attr) & self.REGISTRY_WORDS or
+                         (isinstance(n.func.value, ast.Name) and _w(n.func.value.id) & self.REGISTRY_WORDS)):
                     fq_func = self.p.resolve_expr_static(mname, n.func)
                     fq_func = self.p.canonical(fq_func) if fq_func else None
                     if not fq_func or self.p.is_project(fq_func) or fq_func.split(".")[0] in STDLIB_TOP:
@@ -2655,10 +2657,10 @@ class Analysis:
         return out
 
     def _def_qualname(self, mname, node):
-        for fq, info in self.p.functions.items():
-            if info.node is node:
-                return fq
-        return None
+        idx = self.__dict__.get("_def_index")
+        if idx is None:
+            idx = self._def_index = {id(info.node): fq for fq, info in self.p.functions.items()}
+        return idx.get(id(node))
 
     def closure_dumps(self, q) -> list:
         """(v6c) Normalised code of the project functions a callable (or a class's methods) calls, transitively up
@@ -2672,20 +2674,26 @@ class Analysis:
     def package_in_use(self, pkg) -> bool:
         """(v6c) The project installs (INSTALLED_APPS, also through an AppConfig path), imports, or names in a
         setting string the top-level package `pkg`."""
-        memo = self.__dict__.setdefault("_pkg_in_use", {})
-        if pkg in memo:
-            return memo[pkg]
         if pkg == "django":
-            memo[pkg] = True
             return True
+        used = self.__dict__.get("_pkgs_used")
+        if used is None:
+            used = self._pkgs_used = self._packages_used()
+        return pkg in used or "INSTALLED_APPS" not in self.settings.values or \
+            bool(self.settings.dynamic_items("INSTALLED_APPS"))      # may be installed: keep the group
+
+    def _packages_used(self) -> set:
         used = set()
         for a in self.settings.str_list("INSTALLED_APPS"):
             used.add(a.split(".")[0])
-        for mod in self.p.modules.values():
+        settings_mods = set(self.settings.modules or [])
+        for mname, mod in self.p.modules.items():
             for q in mod.symbols.values():
                 if isinstance(q, str):
                     used.add(q.split(".")[0])
-            for n in ast.walk(mod.tree):        # include("allauth.urls"), a dotted path loaded at run time
+            if "urlpatterns" not in mod.assigns and mname not in settings_mods:
+                continue
+            for n in ast.walk(mod.tree):        # include("allauth.urls") in a URLconf, a dotted path in settings
                 if isinstance(n, ast.Constant) and isinstance(n.value, str) and "." in n.value and \
                         len(n.value) < 200 and " " not in n.value:
                     used.add(n.value.split(".")[0])
@@ -2694,10 +2702,7 @@ class Analysis:
                 for y in (x if isinstance(x, (list, tuple)) else [x]):
                     if isinstance(y, str) and "." in y and " " not in y:
                         used.add(y.split(".")[0])
-        hit = pkg in used or "INSTALLED_APPS" not in self.settings.values or \
-            bool(self.settings.dynamic_items("INSTALLED_APPS"))      # may be installed: keep the group
-        memo[pkg] = hit
-        return hit
+        return used
 
     def settings_reads(self, fq: str) -> set:
         """(v5, R7) Settings a project function reads at run time: `settings.X`, `getattr(settings, "X"[, d])`

@@ -47,7 +47,8 @@ written for these tests; no development-project code is copied.
     RoutingVisibilityTests    a URL list filled by a decorator at run time is a gap; class-based settings
                               (django-configurations) are read; unrouted paths are not ranked below routed ones
     MiddlewareConditionTests  the SECRET_KEY_FALLBACKS re-hash branch is a path only with fallbacks configured
-    GroupedSiteTests          a new entry point reaching a grouped heuristic site is a NEW_PATH that names it
+    GroupedSiteTests          a new entry point reaching a grouped site is a NEW_PATH that names it; a catalogued mint
+                              that six or more entry points reach through a signal receiver is one grouped entry
     NameFallbackTests         up to six project definitions of a method called on an untyped receiver are hashed;
                               more mark the fingerprint incomplete
     ExtractRefactorTests      moving the mint call into an inlined helper keeps the path; extract method in a class
@@ -1637,6 +1638,38 @@ class GroupedSiteTests(unittest.TestCase):
                                                                  "path('p2/', views.v2), path('p3/', views.v3)]"))
         self.assertTrue(code & 1, findings)
         self.assertIn("route:p3/", " ".join(f["message"] for f in findings if f["kind"] == "new_path"))
+
+
+    def test_catalog_mint_behind_a_signal_receiver_is_one_entry(self):
+        models = textwrap.dedent("""\
+            from django.db import models
+            from django.db.models.signals import post_save
+            from django.dispatch import receiver
+            from rest_framework.authtoken.models import Token
+
+
+            class Bot(models.Model):
+                user = models.OneToOneField("auth.User", on_delete=models.CASCADE)
+
+
+            @receiver(post_save, sender=Bot)
+            def give_token(sender, instance, created, **kwargs):
+                if created:
+                    Token.objects.create(user=instance.user)
+            """)
+        views = "from django.http import HttpResponse\n\nfrom shop.models import Bot\n\n\n" + "".join(
+            f"def v{i}(request):\n    Bot.objects.create(user=request.user)\n"
+            f"    return HttpResponse('ok')\n\n\n" for i in range(7))
+        urls = "from django.urls import path\nfrom shop import views\nurlpatterns = [" + ", ".join(
+            f"path('b{i}/', views.v{i})" for i in range(6)) + "]\n"
+        root = project(self, {"conf/urls.py": urls, "shop/views.py": views, "shop/models.py": models})
+        rep = scan(root)
+        tok = [p for p in rep["paths"] if p["mint"]["api"] == "rest_framework.authtoken.models.Token.objects.create"]
+        self.assertEqual(len(tok), 1, [p["entry"]["id"] for p in tok])
+        self.assertEqual(len(tok[0]["entry"]["reached_from"]), 6)
+        findings, code = run_diff(self, root, lambda: replace_in(root, "conf/urls.py", "path('b5/', views.v5)]",
+                                                                 "path('b5/', views.v5), path('b6/', views.v6)]"))
+        self.assertTrue(code & 1, findings)
 
 
 # ============================================================================ name fallback

@@ -385,14 +385,16 @@ class Project:
         to a name containing TEST (`TEST_RUNNER = ...`) are test configuration and do not count."""
         out = set()
         skip = set()
+        consts = []
         for n in ast.walk(mod.tree):
-            if isinstance(n, (ast.Assign, ast.AnnAssign)):
+            if isinstance(n, ast.Constant) and isinstance(n.value, str):
+                consts.append(n)
+            elif isinstance(n, (ast.Assign, ast.AnnAssign)):
                 tgts = n.targets if isinstance(n, ast.Assign) else [n.target]
                 if any(isinstance(t, ast.Name) and "TEST" in t.id.upper() for t in tgts) and n.value is not None:
                     skip |= {id(x) for x in ast.walk(n.value)}
-        for n in ast.walk(mod.tree):
-            if isinstance(n, ast.Constant) and isinstance(n.value, str) and id(n) not in skip and \
-                    len(n.value) < 200 and self._DOTTED.match(n.value):
+        for n in consts:
+            if id(n) not in skip and len(n.value) < 200 and self._DOTTED.match(n.value):
                 parts = n.value.split(".")
                 out |= {".".join(parts[:i]) for i in range(1, len(parts) + 1)}
         return out
@@ -402,10 +404,18 @@ class Project:
         analysed anyway: naming a production module `test_*.py` must not hide it.  (v6c) So is one that analysed
         code names in a dotted string (settings, URLconf include(), a dotted path loaded at run time)."""
         pending = list(self.modules.values())
-        while pending:
+        # (v6c) dotted strings re-include test-helper modules only (testutils / test_utils packages and files):
+        # scanning every string of every module for test directories would cost time and find test settings
+        helpers = {n for n, rows in excluded.items()
+                   if any(r[2].startswith("in a test-helper package") or
+                          os.path.basename(r[1]) in ("testutils.py", "test_utils.py") for r in rows)}
+        while pending and excluded:
             nxt = []
             for mod in pending:
-                for name in sorted(self._imported_names(mod) | self._string_refs(mod)):
+                refs = self._imported_names(mod)
+                if helpers:
+                    refs |= self._string_refs(mod) & helpers
+                for name in sorted(refs):
                     for ap, rel, reason, tree in excluded.pop(name, []):
                         self.files_seen.append(rel)
                         if tree is None:

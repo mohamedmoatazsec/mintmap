@@ -1347,6 +1347,8 @@ class CredentialHeuristics:
         if info is None:
             return False
         leaf = fq.rsplit(".", 1)[-1]
+        if leaf not in ("authenticate", "authenticate_credentials") and not self.mentions(info) & {"user", "scope"}:
+            return False
         if info.cls and leaf in ("authenticate", "authenticate_credentials") and \
                 any(c not in self.p.classes for c in self.p.mro(info.cls)[1:]):
             return any(isinstance(n, ast.Return) and n.value is not None and
