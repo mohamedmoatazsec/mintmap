@@ -30,6 +30,7 @@ none of the rules are counted in `coverage.candidates.set_aside` (not reviewed, 
 from __future__ import annotations
 
 import ast
+import re
 
 from .catalog import MintAPI
 from .credentials import words, _leaf
@@ -167,32 +168,64 @@ class CandidateFinder:
         return any(c.startswith("rest_framework.authentication.") or c in cat.library_drf_auth or
                    c in cat.drf_auth_no_mint for c in self.p.mro(cls))
 
+    AUTH_LIBRARY_EXCLUDED = ("django.contrib.auth.backends.",)
+
+    def _is_other_auth_class(self, cls) -> bool:
+        """(v6c) A project class with an `authenticate(self, request, ...)` method and a LIBRARY base other than a
+        Django authentication backend: the authentication class of a framework the catalog does not describe
+        (django-ninja `APIKeyHeader` / `HttpBearer`, a GraphQL or RPC framework's auth hook).  Classes named in
+        AUTHENTICATION_BACKENDS are backends (their checks are part of authenticate()'s evidence)."""
+        backends = set(self.a.settings.str_list("AUTHENTICATION_BACKENDS"))
+        if cls in {self.a.resolve_dotted(b) for b in backends}:
+            return False
+        libs = [c for c in self.p.mro(cls)[1:] if c not in self.p.classes and c not in ("object", "builtins.object")]
+        return bool(libs) and not any(c.startswith(self.AUTH_LIBRARY_EXCLUDED) for c in libs)
+
     def _request_authenticator(self, info, seen) -> list:
         """(v6) A request-scoped login in project code: a DRF authentication method that returns something (the
-        (user, auth) pair), or an assignment `request.user = <user>` (not AnonymousUser / None)."""
+        (user, auth) pair), or an assignment `request.user = <user>` (not AnonymousUser / None).
+        (v6c) Also the `authenticate(self, request, ...)` method of a project class deriving from another
+        framework's authentication base (django-ninja), and `scope["user"] = ...` (an ASGI / Channels middleware).
+        A `request.user` / `scope["user"]` assignment no longer needs a visible credential read: trusting a header
+        or a parameter with no check is the riskiest form (rank high); one after a credential read or check is
+        medium."""
         leaf = info.qualname.rsplit(".", 1)[-1]
-        hit, text = None, ""
+        hit, text, signal, rank = None, "", "", "medium"
+        params = info.params[1:] if info.cls and info.params[:1] == ["self"] else info.params
         if info.cls and leaf in self.DRF_AUTH_METHODS and self._is_drf_auth_class(info.cls):
+            signal = "drf_authentication"
+        elif info.cls and leaf == "authenticate" and params[:1] == ["request"] and \
+                self._is_other_auth_class(info.cls):
+            signal = "authentication_class"
+        if signal:
             for n in self.p.walk_function_body(info.node):
                 if isinstance(n, ast.Return) and n.value is not None and not (
                         isinstance(n.value, ast.Constant) and n.value.value is None):
                     hit, text = n, f"{info.cls.rsplit('.', 1)[-1]}.{leaf}() returns {_short_src(n.value)}"
                     break
-        elif "user" in seen and "request" in seen and self._reads_credential(info):
+        elif ("user" in seen and "request" in seen) or "scope" in seen:
             for n in self.p.walk_function_body(info.node):
                 if not isinstance(n, ast.Assign):
                     continue
                 for t in n.targets:
-                    if isinstance(t, ast.Attribute) and t.attr in ("user", "_cached_user", "_force_auth_user") and \
-                            _is_request(t.value):
-                        v = n.value
-                        names = {x.id for x in ast.walk(v) if isinstance(x, ast.Name)} | \
-                                {x.attr for x in ast.walk(v) if isinstance(x, ast.Attribute)}
-                        if (isinstance(v, ast.Constant) and v.value is None) or names & self.NOT_A_USER or \
-                                (isinstance(v, ast.Attribute) and _is_request(v.value)):
-                            continue      # logs out, or copies the request's own user
-                        hit, text = n, f"{_short_src(t)} = {_short_src(v)}"
-                        break
+                    is_req = isinstance(t, ast.Attribute) and t.attr in ("user", "_cached_user", "_force_auth_user") \
+                        and _is_request(t.value)
+                    is_scope = isinstance(t, ast.Subscript) and isinstance(t.slice, ast.Constant) and \
+                        t.slice.value == "user" and ((isinstance(t.value, ast.Name) and t.value.id == "scope") or
+                                                     (isinstance(t.value, ast.Attribute) and t.value.attr == "scope"))
+                    if not (is_req or is_scope):
+                        continue
+                    v = n.value
+                    names = {x.id for x in ast.walk(v) if isinstance(x, ast.Name)} | \
+                            {x.attr for x in ast.walk(v) if isinstance(x, ast.Attribute)}
+                    if (isinstance(v, ast.Constant) and v.value is None) or names & self.NOT_A_USER or \
+                            any("anonymous" in x.lower() for x in names) or \
+                            (isinstance(v, ast.Attribute) and _is_request(v.value)):
+                        continue      # logs out, or copies a request's own user
+                    hit, text = n, f"{_short_src(t)} = {_short_src(v)}"
+                    signal = "scope_user_assignment" if is_scope else "request_user_assignment"
+                    rank = "medium" if self._reads_credential(info) else "high"
+                    break
                 if hit is not None:
                     break
         if hit is None:
@@ -201,14 +234,14 @@ class CandidateFinder:
             if self.a.mint_of(site, self.a.cg.resolve(site, info.cls)):
                 return []     # a confirmed mint (login() ...) in the same function: that path covers it
         reason = f"authenticates the request itself: {text}"
+        if rank == "high":
+            reason += " (no credential read or check in this function: the user may come from an untrusted value)"
         site = _pseudo_site(info.qualname, hit, text, "request_authenticator")
         api = candidate_api("request_authenticator", f"request_authenticator[{info.qualname.rsplit('.', 2)[-2]}."
                             f"{leaf}]" if info.cls else f"request_authenticator[{leaf}]",
                             "candidate: " + GROUPS["request_authenticator"])
-        return [(site, api, reason, dict(group="request_authenticator", rank="medium", reason=reason,
-                                          signals=["drf_authentication" if info.cls and leaf in
-                                                   self.DRF_AUTH_METHODS else "request_user_assignment"],
-                                          keys=[text]))]
+        return [(site, api, reason, dict(group="request_authenticator", rank=rank, reason=reason,
+                                          signals=[signal], keys=[text]))]
 
     def _value_signals(self, v, info, local, depth=0) -> set:
         sig = set()
@@ -380,6 +413,43 @@ class CandidateFinder:
         return [(site, api, reason, dict(group="password_set", rank="medium", reason=reason, signals=[],
                                           keys=[t for _n, t in hits]))]
 
+    def _uncatalogued_auth_call(self, site, res, lib) -> list:
+        from .analysis import STDLIB_TOP
+        from . import overlay
+        top = lib.split(".")[0]
+        if top in overlay.CATALOG_PACKAGES or top in STDLIB_TOP or self.p.is_project(lib) or res.via == "super":
+            return []
+        if res.receiver_type and res.receiver_type in self.p.classes:
+            return []
+        parts = lib.split(".")
+        leaf = parts[-1]
+        ws = set().union(*(words(x) for x in parts))
+        for part in parts:
+            seq = [w.lower() for w in _WORD_SPLIT.split(part) if w]
+            if any((a, b) in (("sign", "in"), ("log", "in"), ("log", "on"), ("sign", "on"))
+                   for a, b in zip(seq, seq[1:])):
+                ws = ws | {"login"}       # `sign_in_as`, `log_in`
+        if not ws & AUTH_LIB_WORDS or ws & CONSUMER_LIB_WORDS or leaf[:1].isupper():
+            return []
+        call = site.node
+        args = list(call.args) + [k.value for k in call.keywords]
+        info = self.p.functions.get(site.func)
+        if info is None:
+            return []
+        if any(_is_request(a) for a in args):
+            why = "receives the HTTP request"
+        elif words(leaf) & CREDENTIAL_NOUNS and any(_user_like(a, info, self.p) for a in args):
+            why = "receives a user and names a credential"
+        else:
+            return []
+        if leaf.startswith(ACCESSOR_PREFIXES) and not words(leaf) & CREDENTIAL_NOUNS:
+            return []
+        reason = (f"calls {lib}() of a package the catalog does not cover; the name says it authenticates or issues "
+                  f"a credential and it {why}")
+        api = candidate_api("auth_library_call", lib, "candidate: " + GROUPS["auth_library_call"])
+        return [(api, reason, dict(group="auth_library_call", rank="medium", reason=reason,
+                                    signals=["uncatalogued_package"], keys=[lib]))]
+
     def _own_principal(self, recv, info) -> bool:
         """`request.user`, `self.request.user` or a local assigned from `request.<x>` / `self.request.<x>`."""
         def from_request(e):
@@ -407,8 +477,15 @@ class CandidateFinder:
             return True
         if cinfo["group"] == "request_authenticator":
             # (v6) DRF runs authentication classes named by views / settings in library code; a `request.user =`
-            # nothing routes to is a task, a command or a test helper building a request
-            return cinfo["signals"] == ["drf_authentication"]
+            # nothing routes to is a task, a command or a test helper building a request.  (v6c) Likewise for
+            # another framework's authentication class and an ASGI middleware setting scope["user"] (run by the
+            # ASGI application, which MintMap does not route)
+            return cinfo["signals"][:1] in (["drf_authentication"], ["authentication_class"],
+                                            ["scope_user_assignment"])
+        if cinfo["group"] == "auth_library_call":
+            # (v6c) a package the catalog does not cover may route the code itself (a GraphQL mutation, an RPC
+            # handler): visible even when MintMap found no route
+            return cinfo["signals"] == ["uncatalogued_package"]
         if cinfo["group"] == "password_set":
             info = self.p.functions.get(fq)
             leaf = fq.rsplit(".", 1)[-1]
@@ -437,8 +514,13 @@ class CandidateFinder:
 
     # ------------------------------------------------------------------ call sites
     def call_candidate(self, site, res) -> list:
-        """A call that hands the HTTP request to an uncatalogued function of an authentication package."""
+        """A call that hands the HTTP request to an uncatalogued function of an authentication package.  (v6c) Also
+        a function of a package the catalog does not cover at all whose dotted name says it authenticates
+        (`loginas.utils.login_as(user, request)`, `graphql_jwt.shortcuts.get_token(user)`): it receives the
+        request or a user."""
         lib = res.library or ""
+        if lib and isinstance(site.node, ast.Call) and lib.split(".")[0] not in AUTH_PACKAGES:
+            return self._uncatalogued_auth_call(site, res, lib)
         if not lib or lib.split(".")[0] not in AUTH_PACKAGES or not isinstance(site.node, ast.Call):
             return []
         if res.receiver_type and res.receiver_type in self.p.classes:
@@ -461,6 +543,38 @@ class CandidateFinder:
         api = candidate_api("auth_library_call", lib, "candidate: " + GROUPS["auth_library_call"])
         return [(api, reason, dict(group="auth_library_call", rank="medium", reason=reason, signals=["request_arg"],
                                     keys=[lib]))]
+
+
+_WORD_SPLIT = re.compile(r"[^A-Za-z0-9]+|(?<=[a-z0-9])(?=[A-Z])")
+# (v6c) words of a library function's dotted name that say it authenticates or issues a credential
+AUTH_LIB_WORDS = {"auth", "login", "loginas", "signin", "token", "tokens", "jwt", "session", "sso", "saml",
+                  "saml2", "oidc", "oauth", "oauth2", "otp", "totp", "mfa", "2fa", "impersonate", "impersonation",
+                  "hijack", "credential", "credentials", "password", "passwordless", "magic", "apikey", "sesame"}
+# ... and words that say it only reads, checks or ends one (consumers are not mints)
+CONSUMER_LIB_WORDS = {"logout", "revoke", "delete", "verify", "check", "validate", "decode", "is", "has",
+                      "require", "required", "decorator", "decorators", "exempt", "middleware", "settings",
+                      "conf", "signals", "exceptions", "errors", "utils_test", "testing", "tests"}
+CREDENTIAL_NOUNS = {"token", "tokens", "jwt", "key", "secret", "otp", "password", "session", "credential",
+                    "ticket"}
+USER_SOURCE_LEAVES = {"authenticate", "aauthenticate", "get_user", "aget_user", "create_user", "acreate_user",
+                      "create_superuser", "get_user_model"}
+
+
+def _user_like(e, info, p) -> bool:
+    """(v6c) An argument that is a user: `request.user` / `info.context.user`, a name that says so (`user`,
+    `target_user`, `member`), or a local assigned from authenticate() / get_user() / create_user() /
+    get_object_or_404(<user model>, ...)."""
+    if isinstance(e, ast.Attribute) and e.attr == "user":
+        return True
+    if isinstance(e, ast.Name):
+        if words(e.id) & {"user", "member", "account", "customer", "principal"}:
+            return True
+        for n in p.walk_function_body(info.node):
+            if isinstance(n, ast.Assign) and any(isinstance(t, ast.Name) and t.id == e.id for t in n.targets):
+                for x in ast.walk(n.value):
+                    if isinstance(x, ast.Call) and _leaf(x.func) in USER_SOURCE_LEAVES:
+                        return True
+    return False
 
 
 def _is_request(e) -> bool:
