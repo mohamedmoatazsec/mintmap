@@ -82,7 +82,9 @@ def path_review(p: dict) -> dict:
     score += s
     why.append(text)
     ek = p["entry"].get("kind")
-    if ek == "unrouted":
+    if st == "shadowed_by_earlier_route":
+        pass                       # already said: not reachable through its route
+    elif ek == "unrouted":
         why.append("no route, middleware or authentication class reaches it (unrouted)")
     else:
         score += 1

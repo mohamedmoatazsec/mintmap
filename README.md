@@ -26,9 +26,10 @@ than telling you *that the set of ways in has changed*.
    hand-written session state (logins, MFA / step-up / impersonation state, session hand-offs), passwords set
    from a value the code does not generate, the request handed to an authentication-library function the catalog
    does not describe, unregistered subclasses of minting middleware or views, and project code that authenticates
-   requests itself (DRF authentication classes, `request.user = ...` after a credential check). Candidates are
-   traced, fingerprinted and diffed like paths, but reviewed as one lock entry per kind (`candidates:<kind>`)
-   whose sites are ranked and carry the reason they were reported.
+   requests itself (DRF authentication classes, `request.user = ...` after a credential check), and mint sites
+   that only start-up, deploy or command-line code reaches (`AppConfig.ready()`, settings, management commands).
+   Candidates are traced, fingerprinted and diffed like paths, but reviewed as one lock entry per kind
+   (`candidates:<kind>`) whose sites are ranked and carry the reason they were reported.
 3. **Records the checks it can see on the way**: password, TOTP, WebAuthn, token signature, permission gates, and
    a best-effort judgement of whether each check's result decides the outcome. This evidence is often weaker than
    the truth and sometimes wrong (see [Accuracy](#accuracy)).
@@ -60,12 +61,19 @@ version CI uses.
 ```bash
 pip install "git+https://github.com/OWNER/mintmap"      # replace OWNER; PyPI release pending
 
-mintmap scan  path/to/django/project                    # see the map and the gaps
+mintmap scan  path/to/django/project                    # the review queue, path evidence and the gaps
 mintmap init  path/to/django/project                    # write mintmap.lock (all entries unreviewed)
-# review the entries, then record the decision:
-mintmap accept path/to/django/project --all --reviewer "alice" --note "initial review"
+# review the entries, then record the decision (one group at a time, or --all):
+mintmap accept path/to/django/project --group kind:session --reviewer "alice" --note "initial review"
 git add path/to/django/project/mintmap.lock && git commit -m "Add reviewed MintMap lock"
 ```
+
+The text report of `scan` starts with a **review queue** (0.6.0.dev0): confirmed paths grouped by credential kind
+(`kind:session`, `kind:token`, `kind:precursor`, `kind:custom`, `kind:other`) and entry point, candidate sites by
+kind, and the settings groups; inside a group the entries are ranked by a transparent risk score (credential kind,
+check evidence, reachability, confidence), each with a `why` line. `mintmap accept --group <group>` accepts one
+such group. Lock entries carry the same information in an informational `review` block that `diff` ignores (locks
+written by 0.5.0a1 stay valid; `mintmap update` adds it).
 
 After an intended change: `mintmap update <dir>` refreshes the lock (changed entries become unreviewed again),
 then `mintmap accept <dir> <ids...> --reviewer <name>`.
@@ -120,7 +128,9 @@ changed one 4, naming new or lost entry points); its findings carry `"tier": "ca
 Formatting, comments, docstrings and renamed local variables are normalised and do not change fingerprints. Simple
 extractions of a helper function in the same module are normalised too, but extracting a method, extracting a
 helper that takes expressions as arguments, or moving code to another module still changes the fingerprint (a
-false alarm): in the evaluation, 3 of 8 extract-function refactors raised a finding.
+false alarm): in the evaluation, 3 of 8 extract-function refactors raised a finding. (0.6.0.dev0, not yet
+evaluated: extracting a method of the same class that no subclass overrides, and helpers called with attribute
+arguments such as `request.META`, are normalised as well; moving code to another module or class still is not.)
 
 ## Accuracy
 
