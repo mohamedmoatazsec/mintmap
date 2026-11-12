@@ -33,10 +33,22 @@ again on its own (see `Analysis.project_closure`, v5 review fix: coverage is dec
 present in hashed dumps at any inlining depth, not from each function's own transformation; a helper that the
 outermost dump does not inline, because of that caller's locals or the depth budget `MAX_INLINE_DEPTH`, is hashed
 on its own).  Anything that does not meet these conditions is hashed as before (a possible
-false alarm, never a missed change).  Not handled (documented): extracting the mint call itself into the
-helper (the mint site moves to another function, so the path id changes), helpers in another module or class
-(methods: `self.h()` may be overridden), helpers with control flow around `return`, and arguments that are
-expressions (evaluated once at the call, but several times if substituted).
+false alarm, never a missed change).
+
+(v6b) Also inlined: "extract method", a call `self.h(...)` made by a method of class `C` where `h` is a plain
+method of the same class `C` (see `method_shape`: no decorator, not rebound in the class body, not overridden by
+any project subclass of `C`, the caller never rebinds its receiver); and arguments that are attribute chains on
+a name (`request.META`, `self.request.headers`) when the helper assigns or deletes none of the chain's
+attributes (the chain is then read where the parameter is used rather than once at the call: the same object
+unless reading the attribute has side effects).  A private method (`_h`) whose every reference in the project is
+such an inlined call from a kept method of its class is left out of `class_dump` and is not a callee root of a
+library flow (its body is in the callers' dumps); a public method stays (a library may call it by name).
+
+Not handled (documented): extracting the mint call itself into the helper (the mint site moves to another
+function, so the path id changes), helpers in another module or another class, helpers with control flow around
+`return`, other expression arguments (`f(x)`, `a or b`: evaluated once at the call, but several times if
+substituted), and check evidence (it is computed on the code as written, so a check moved into a helper can
+read weaker).
 """
 from __future__ import annotations
 
@@ -52,11 +64,14 @@ _STMT_LIST_FIELDS = ("body", "orelse", "finalbody")
 
 
 class _Shape:
-    __slots__ = ("qn", "module", "params", "stmts", "ret", "locals", "free")
+    __slots__ = ("qn", "module", "params", "stmts", "ret", "locals", "free", "stored_attrs", "cls")
 
-    def __init__(self, qn, module, params, stmts, ret, locals_, free):
+    def __init__(self, qn, module, params, stmts, ret, locals_, free, stored_attrs=frozenset(), cls=None):
         self.qn, self.module, self.params, self.stmts, self.ret, self.locals, self.free = \
             qn, module, params, stmts, ret, locals_, free
+        # (v6b) attribute names the helper assigns or deletes (an attribute-chain argument through one of them
+        # could read a different object after the assignment); `cls`: the class of a method helper
+        self.stored_attrs, self.cls = stored_attrs, cls
 
 
 class Inliner:
@@ -66,16 +81,59 @@ class Inliner:
         self._fn: dict = {}        # qualname -> (dump, inlined original call ids, transformed tree, inlined bodies)
         self._cls: dict = {}
         self._counter = 0
+        self._subclasses: dict = {}
+        self._omit: dict = {}
+        self._attr_refs = None     # (v6b) project-wide counts of attribute names / string constants
 
     # ------------------------------------------------------------------ helper eligibility
     def shape(self, qn: str):
+        """Eligibility of a module-level function as an inlinable helper (None: not eligible)."""
         if qn in self._shapes:
             return self._shapes[qn]
         self._shapes[qn] = None
         info = self.p.functions.get(qn)
         if info is None or info.cls or info.parent or isinstance(info.node, ast.AsyncFunctionDef):
             return None
-        node = info.node
+        s = self._body_shape(info, info.node)
+        self._shapes[qn] = s
+        return s
+
+    def method_shape(self, qn: str):
+        """(v6b) Eligibility of a method `C.h` as an inlinable helper of `self.h(...)` calls made by other methods
+        of the same class `C` ("extract method").  Besides the conditions of `shape` (the receiver is its first
+        parameter, which the body never rebinds): `h` is a plain method (no decorator, so no staticmethod /
+        classmethod / property), the class body does not rebind the name `h`, and no project subclass of `C`
+        overrides `h` (so `self.h` means `C.h` for every receiver the project creates)."""
+        key = ("m", qn)
+        if key in self._shapes:
+            return self._shapes[key]
+        self._shapes[key] = None
+        info = self.p.functions.get(qn)
+        if info is None or not info.cls or info.parent or isinstance(info.node, ast.AsyncFunctionDef):
+            return None
+        ci = self.p.classes.get(info.cls)
+        name = info.node.name
+        if ci is None or ci.methods.get(name) != qn or name in ci.attrs or \
+                (name.startswith("__") and name.endswith("__")):
+            return None
+        if not (info.node.args.posonlyargs + info.node.args.args):
+            return None
+        if self._overridden_below(info.cls, name):
+            return None
+        s = self._body_shape(info, info.node)
+        if s is not None:
+            s.cls = info.cls
+        self._shapes[key] = s
+        return s
+
+    def _overridden_below(self, cls_qn: str, name: str) -> bool:
+        subs = self._subclasses.get(cls_qn)
+        if subs is None:
+            subs = [c for c in self.p.classes if c != cls_qn and cls_qn in self.p.mro(c)]
+            self._subclasses[cls_qn] = subs
+        return any(name in self.p.classes[c].methods or name in self.p.classes[c].attrs for c in subs)
+
+    def _body_shape(self, info, node):
         a = node.args
         if node.decorator_list or a.vararg or a.kwarg or a.kwonlyargs or a.defaults or \
                 any(d is not None for d in a.kw_defaults):
@@ -106,9 +164,9 @@ class Inliner:
         ren, _kept, _g, _nl = local_bindings(node)
         free = {n.id for n in own if isinstance(n, ast.Name) and isinstance(n.ctx, ast.Load)
                 and n.id not in params and n.id not in ren}
-        s = _Shape(qn, info.module, params, stmts, ret, ren, free)
-        self._shapes[qn] = s
-        return s
+        stored = frozenset(n.attr for n in own if isinstance(n, ast.Attribute)
+                           and isinstance(n.ctx, (ast.Store, ast.Del)))
+        return _Shape(info.qualname, info.module, params, stmts, ret, ren, free, stored)
 
     # ------------------------------------------------------------------ public
     def function_dump(self, qn: str) -> str:
@@ -129,25 +187,83 @@ class Inliner:
         return self._transform(qn)[3]
 
     def class_dump(self, cls_qn: str) -> str:
-        """Whole class, with every method replaced by its inlined form."""
+        """Whole class, with every method replaced by its inlined form.  (v6b) A private method (`_name`, not a
+        dunder) whose every reference in the project is a `self._name(...)` call that a kept method of this
+        class inlines is left out: its body is in those methods' dumps ("extract method" leaves the class dump
+        unchanged)."""
         hit = self._cls.get(cls_qn)
         if hit is not None:
             return hit
         ci = self.p.classes[cls_qn]
+        omit = self.omitted_methods(cls_qn)
         node = copy.deepcopy(ci.node)
         new_body = []
         for st in node.body:
             if isinstance(st, (ast.FunctionDef, ast.AsyncFunctionDef)) and f"{cls_qn}.{st.name}" in self.p.functions:
+                if st.name in omit:
+                    continue
                 new_body.append(copy.deepcopy(self.transformed_node(f"{cls_qn}.{st.name}")))
             else:
                 new_body.append(st)
-        node.body = new_body
+        node.body = new_body or [ast.Pass()]
         out = dump_normalized(node)
         self._cls[cls_qn] = out
         return out
 
+    def _references(self):
+        """(v6b) Project-wide counts of attribute names (`x.name`) and the set of string constants."""
+        if self._attr_refs is None:
+            attrs, strings = {}, set()
+            for mod in self.p.modules.values():
+                for n in ast.walk(mod.tree):
+                    if isinstance(n, ast.Attribute):
+                        attrs[n.attr] = attrs.get(n.attr, 0) + 1
+                    elif isinstance(n, ast.Constant) and isinstance(n.value, str) and n.value.isidentifier():
+                        strings.add(n.value)
+            self._attr_refs = (attrs, strings)
+        return self._attr_refs
+
+    def omitted_methods(self, cls_qn: str) -> set:
+        """(v6b) Names of the private methods of `cls_qn` that `class_dump` leaves out (inlined everywhere)."""
+        hit = self._omit.get(cls_qn)
+        if hit is None:
+            hit = self._omit[cls_qn] = frozenset(self._omitted_methods(cls_qn)) if cls_qn in self.p.classes \
+                else frozenset()
+        return hit
+
+    def _omitted_methods(self, cls_qn: str) -> set:
+        ci = self.p.classes[cls_qn]
+        own = {name: qn for name, qn in ci.methods.items() if qn == f"{cls_qn}.{name}" and qn in self.p.functions}
+        cand = {name for name, qn in own.items()
+                if name.startswith("_") and not name.startswith("__") and self.method_shape(qn) is not None}
+        if not cand:
+            return set()
+        attrs, strings = self._references()
+        inlined_in = {}           # helper name -> methods whose own dump inlines a `self.name(...)` call
+        counts = {}
+        for name, qn in own.items():
+            inl = self.inlined_calls(qn)
+            if not inl:
+                continue
+            for n in ast.walk(self.p.functions[qn].node):
+                if id(n) in inl and isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute) and \
+                        n.func.attr in cand:
+                    counts[n.func.attr] = counts.get(n.func.attr, 0) + 1
+                    inlined_in.setdefault(n.func.attr, set()).add(name)
+        omit = {h for h in cand if counts.get(h) and counts[h] == attrs.get(h, 0) and h not in strings}
+        # a helper is omitted only where the methods that inline it are kept (their dumps carry its body)
+        changed = True
+        while changed:
+            changed = False
+            for h in sorted(omit):
+                if inlined_in.get(h, set()) & omit:
+                    omit.discard(h)
+                    changed = True
+        return omit
+
     def _may_inline(self, info) -> bool:
         caller_locals = set(info.local_vars) | set(info.local_imports)
+        recv = self._receiver(info)
         for n in ast.walk(info.node):
             if isinstance(n, ast.Call) and isinstance(n.func, ast.Name):
                 if n.func.id == "bool":
@@ -158,7 +274,29 @@ class Inliner:
                 q = self.p.canonical(q) if q else None
                 if q and q != info.qualname and self.shape(q) is not None:
                     return True
+            elif recv and isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute) and \
+                    isinstance(n.func.value, ast.Name) and n.func.value.id == recv:
+                q = self.p.classes[info.cls].methods.get(n.func.attr)
+                if q and q != info.qualname and self.method_shape(q) is not None:
+                    return True
         return False
+
+    def _receiver(self, info):
+        """(v6b) The name of the receiver parameter (`self`) of a plain method, when the method never rebinds it;
+        None for functions, static / class methods and nested functions."""
+        if not info.cls or info.parent or info.cls not in self.p.classes:
+            return None
+        node = info.node
+        if any(isinstance(d, ast.Name) and d.id in ("staticmethod", "classmethod") for d in node.decorator_list):
+            return None
+        params = node.args.posonlyargs + node.args.args
+        if not params:
+            return None
+        name = params[0].arg
+        for n in own_nodes(node):
+            if isinstance(n, ast.Name) and n.id == name and isinstance(n.ctx, (ast.Store, ast.Del)):
+                return None
+        return name
 
     # ------------------------------------------------------------------ transformation
     def _transform(self, qn):
@@ -175,7 +313,7 @@ class Inliner:
         tree = copy.deepcopy(info.node, memo)
         orig_of = {id(v): k for k, v in memo.items() if isinstance(v, ast.AST)}
         st = dict(info=info, caller_locals=set(info.local_vars) | set(info.local_imports), inlined=set(),
-                  orig_of=orig_of, bodies=set())
+                  orig_of=orig_of, bodies=set(), receiver=self._receiver(info))
         self._rewrite_lists(tree, st, depth=0, stack=(qn,))
         self._peephole_bool(tree, info)
         # keep the transformed tree before dumping (dump_normalized renames in place: dump a copy)
@@ -207,32 +345,49 @@ class Inliner:
         return out or [ast.Pass()]
 
     def _resolve_helper(self, call, st, stack):
-        if not isinstance(call, ast.Call) or not isinstance(call.func, ast.Name):
+        if not isinstance(call, ast.Call):
             return None
         info = st["info"]
-        name = call.func.id
-        if name in st["caller_locals"]:
+        receiver = None
+        if isinstance(call.func, ast.Name):
+            name = call.func.id
+            if name in st["caller_locals"]:
+                return None
+            q = self.p.lookup_symbol(info.module, name)
+            q = self.p.canonical(q) if q else None
+            if not q or q in stack:
+                return None
+            s = self.shape(q)
+        elif isinstance(call.func, ast.Attribute) and isinstance(call.func.value, ast.Name) and \
+                st.get("receiver") and call.func.value.id == st["receiver"]:
+            # (v6b) extract method: `self.h(...)` with `h` a plain method of the caller's own class
+            q = self.p.classes[info.cls].methods.get(call.func.attr)
+            if not q or q in stack:
+                return None
+            s = self.method_shape(q)
+            if s is None or s.cls != info.cls:
+                return None
+            receiver = ast.Name(id=st["receiver"], ctx=ast.Load())
+        else:
             return None
-        q = self.p.lookup_symbol(info.module, name)
-        q = self.p.canonical(q) if q else None
-        if not q or q in stack:
-            return None
-        s = self.shape(q)
         if s is None or s.module != info.module or (s.free & st["caller_locals"]):
             return None
         if any(isinstance(a, ast.Starred) for a in call.args) or any(k.arg is None for k in call.keywords):
             return None
-        if len(call.args) > len(s.params):
+        params = s.params[1:] if receiver is not None else s.params
+        if len(call.args) > len(params):
             return None
-        binding = dict(zip(s.params, call.args))
+        binding = dict(zip(params, call.args))
         for k in call.keywords:
-            if k.arg not in s.params or k.arg in binding:
+            if k.arg not in params or k.arg in binding:
                 return None
             binding[k.arg] = k.value
-        if set(binding) != set(s.params):
+        if set(binding) != set(params):
             return None
-        if not all(isinstance(v, (ast.Name, ast.Constant)) for v in binding.values()):
+        if not all(_stable_argument(v, s.stored_attrs) for v in binding.values()):
             return None
+        if receiver is not None:
+            binding[s.params[0]] = receiver
         return s, binding
 
     def _instantiate(self, s: _Shape, binding: dict):
@@ -367,6 +522,21 @@ class Inliner:
                 n.operand = strip(n.operand)
             elif isinstance(n, ast.comprehension):
                 n.ifs = [strip(x) for x in n.ifs]
+
+
+def _stable_argument(v, stored_attrs) -> bool:
+    """(v6b) An argument that may be substituted for a parameter: a name, a constant, or an attribute chain on a
+    name (`request.headers`, `self.request.META`) none of whose attributes the helper assigns or deletes.  A chain
+    is then read where the helper uses the parameter instead of once at the call: the same object, unless reading
+    the attribute has side effects (documented)."""
+    if isinstance(v, (ast.Name, ast.Constant)):
+        return True
+    n = v
+    while isinstance(n, ast.Attribute) and isinstance(n.ctx, ast.Load):
+        if n.attr in stored_attrs:
+            return False
+        n = n.value
+    return n is not v and isinstance(n, ast.Name)
 
 
 def _leading_slot(s):

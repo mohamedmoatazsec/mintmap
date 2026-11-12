@@ -2726,9 +2726,11 @@ class Analysis:
         if library_flow and entry.ctx_class:
             # (v5) a library flow inherited by a project class runs the class's project methods (overrides and
             # hooks): their callees are part of what the path depends on
+            # (v6b) a private method whose body is inlined in every method that calls it is not a root of its own
             callee_roots = callee_roots + [(mq, entry.ctx_class) for c in self.p.mro(entry.ctx_class)
                                            if c in self.p.classes
-                                           for mq in sorted(self.p.classes[c].methods.values())]
+                                           for name, mq in sorted(self.p.classes[c].methods.items())
+                                           if name not in self.inliner.omitted_methods(c)]
         # (v5 review fix) project classes / functions handed to the library flow (as_view kwargs, class
         # attributes of a view inheriting library code): the library may call any of their methods
         callee_roots = callee_roots + [n for n in self.injected_methods(entry) if n not in callee_roots]
