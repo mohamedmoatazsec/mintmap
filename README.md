@@ -4,7 +4,7 @@
 
 [![tests](https://github.com/mohamedmoatazsec/mintmap/actions/workflows/tests.yml/badge.svg?branch=main)](https://github.com/mohamedmoatazsec/mintmap/actions/workflows/tests.yml)
 [![license: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
-[![python: 3.11 | 3.12 | 3.13](https://img.shields.io/badge/python-3.11%20%7C%203.12%20%7C%203.13-blue)](pyproject.toml)
+[![python: 3.11 | 3.12 | 3.13 | 3.14](https://img.shields.io/badge/python-3.11%20%7C%203.12%20%7C%203.13%20%7C%203.14-blue)](pyproject.toml)
 [![status: experimental](https://img.shields.io/badge/status-experimental-orange)](#accuracy)
 [![release](https://img.shields.io/github/v/release/mohamedmoatazsec/mintmap?include_prereleases&label=release)](https://github.com/mohamedmoatazsec/mintmap/releases)
 
@@ -303,7 +303,7 @@ No. MintMap reads source code with Python's `ast` module. It **never imports or 
 libraries, needs no database or settings, and has no dependencies beyond the Python standard library (3.11+).
 
 **Which Python versions?**
-3.11, 3.12 and 3.13 are tested. MintMap must run on a Python that can parse the project's code: a project that
+3.11, 3.12, 3.13 and 3.14 are tested. MintMap must run on a Python that can parse the project's code: a project that
 uses Python 3.12 syntax (for example the same quotes nested inside an f-string) needs MintMap on 3.12 or newer,
 otherwise those files are reported as parse failures. Lock fingerprints are the same on Python 3.11, 3.12 and 3.13
 (tested on eight projects), so a lock written with one of these versions can be checked with another; with any

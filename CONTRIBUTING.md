@@ -14,7 +14,7 @@ Open work is listed in [docs/ROADMAP.md](docs/ROADMAP.md).
 
 ## Development setup
 
-MintMap has no dependencies. You need Python 3.11, 3.12 or 3.13 and git.
+MintMap has no dependencies. You need Python 3.11, 3.12, 3.13 or 3.14 and git.
 
 ```bash
 git clone https://github.com/mohamedmoatazsec/mintmap
@@ -49,7 +49,7 @@ python -I -m unittest discover -s tests -t tests
 bash scripts/demo.sh
 ```
 
-CI runs both on Python 3.11, 3.12 and 3.13. `-I` keeps the current directory off `sys.path`, as the action does.
+CI runs both on Python 3.11, 3.12, 3.13 and 3.14. `-I` keeps the current directory off `sys.path`, as the action does.
 
 If you change `examples/demo` or the output format of `scan` or `diff`, refresh the demo lock and the README
 image (see [examples/demo/README.md](examples/demo/README.md)). CI fails if `docs/assets/demo.svg` no longer
@@ -116,7 +116,7 @@ while. That is not a sign that it is unwelcome.
 ## Pull requests
 
 - One topic per pull request, with small commits that each do one thing.
-- Tests pass on 3.11, 3.12 and 3.13, and `bash scripts/demo.sh` prints `demo ok`.
+- Tests pass on 3.11, 3.12, 3.13 and 3.14, and `bash scripts/demo.sh` prints `demo ok`.
 - No new runtime dependencies.
 - **Honesty rules for docs.** The accuracy numbers in `README.md` and `docs/EVALUATION.md` come from a held-out
   evaluation. Do not change them, and do not add claims nobody measured (accuracy, comparisons with other tools,

@@ -25,7 +25,7 @@ inputs:
     default: "255"
   python-version:
     description: >
-      Python used to run MintMap (3.11 or newer; 3.11, 3.12 and 3.13 are tested). It must be able to parse the
+      Python used to run MintMap (3.11 or newer; 3.11 to 3.14 are tested). It must be able to parse the
       project's code (at least the Python version whose syntax the project uses); files it cannot parse are
       reported as parse failures. Lock fingerprints are the same on 3.11, 3.12 and 3.13; with any other version,
       write the lock with the same Python minor version that CI uses.
