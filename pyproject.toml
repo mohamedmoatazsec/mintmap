@@ -9,7 +9,7 @@ description = "A reviewed map of the code paths that create a login session or c
 readme = "README.md"
 license = "Apache-2.0"
 license-files = ["LICENSE"]
-authors = [{ name = "MintMap contributors" }]
+authors = [{ name = "mohamedmoatazsec" }]
 requires-python = ">=3.11"
 dependencies = []
 keywords = ["django", "security", "authentication", "static-analysis", "ci", "appsec"]

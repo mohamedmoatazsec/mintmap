@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+No change to the analysis, the catalog, fingerprints or the lock format.
+
+- `action.yml`: the description no longer contains an apostrophe, which the GitHub Marketplace page dropped
+  ("MintMap s own coverage"). It now ends "or what MintMap can analyse changes."
+- The author shown on PyPI (`pyproject.toml`) and in `CITATION.cff` is `mohamedmoatazsec`.
+- README and `examples/mintmap.yml`: the Action snippet is pinned to the full commit SHA of the `v0.6.0a2` release,
+  with the tag as a comment, and the README has a PyPI version badge.
+
 ## 0.6.0a2 (experimental)
 
 The analysis and the catalog are those evaluated as 0.6.0a1. On Python 3.11 to 3.13, analysis results and
