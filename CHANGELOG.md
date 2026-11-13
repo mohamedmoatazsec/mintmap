@@ -70,6 +70,13 @@ Changed:
 
 - The tagline, the package description and the docs no longer say that MintMap finds "every" path: they say it
   looks for the paths that create a session or credential, as the published miss rates require.
+- Arithmetic on number literals in a settings value (`PASSWORD_RESET_TIMEOUT = 60 * 60`, `-3600`) is folded to its
+  value before the settings group is fingerprinted. Rewriting it as its value (`3600`), or as another expression with
+  the same value, no longer reports `fingerprint_changed`; a different number still does. Only literal arithmetic is
+  folded: names, calls, attributes and strings are not evaluated.
+- Upgrade note: a settings group that contains such an expression, or a negative number literal, reports
+  `fingerprint_changed` once after upgrading, because its fingerprint text changes. Run `mintmap update` and accept
+  the entry again.
 
 ## 0.6.0a1 (experimental)
 
