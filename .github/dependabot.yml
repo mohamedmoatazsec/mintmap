@@ -1,0 +1,9 @@
+# Keeps the pinned commit SHAs of GitHub Actions (workflows and action.yml) up to date.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: ci
