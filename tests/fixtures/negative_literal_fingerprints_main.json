@@ -1,0 +1,8 @@
+{
+  "fingerprints": {
+    "MIDDLEWARE": "6d984498b69c53e74e55ed0c",
+    "PASSWORD_RESET_TIMEOUT": "b366d186668523c6a3a5960d"
+  },
+  "settings_text": "ROOT_URLCONF = 'site.urls'\nINSTALLED_APPS = ['django.contrib.auth']\nMIDDLEWARE = ['django.contrib.auth.middleware.AuthenticationMiddleware']\nPASSWORD_RESET_TIMEOUT = -3600\nSESSION_COOKIE_AGE = -60 * 60\nCSRF_FAILURE_VIEW = 'site.urls.x'\nCONN_MAX_AGE = 600\nDATA_UPLOAD_MAX_MEMORY_SIZE = 2 * 5\n",
+  "source": "upstream main (e8c7600): mintmap scan of settings_text"
+}

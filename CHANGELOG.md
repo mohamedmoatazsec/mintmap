@@ -85,6 +85,7 @@ Changed:
   its value. Run `mintmap update` and accept the entry again. Groups with only plain or negative literals do not
   change. Scan path ids and path fingerprints are unchanged (checked on the demo against upstream `main`).
 - The demo lock and the README image were refreshed with Python 3.13.
+
 ## 0.6.0a1 (experimental)
 
 First public release.

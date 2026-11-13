@@ -13,6 +13,8 @@ import io
 import json
 import os
 import shutil
+import subprocess
+import sys
 import tempfile
 import time
 import unittest
@@ -23,13 +25,34 @@ from mintmap.cli import main
 from mintmap.core.fingerprint import stable_dump
 from mintmap.core.settings_extract import fold_numbers, number_literal
 
+SRC = os.path.join(PROTO, "src")
 DEMO = os.path.join(PROTO, "examples", "demo")
 BASELINE = os.path.join(PROTO, "tests", "fixtures", "demo_scan_paths_main.json")
 SCAN_LIMIT_S = 30          # generous for CI; the dangerous expressions take milliseconds
+NUMBER_LIMIT_S = 10        # one number_literal() call in a child process
 
 
 def expr(text):
     return ast.parse(text, mode="eval").body
+
+
+def run_in_child(code, timeout):
+    """Run `code` in a fresh interpreter (python -I) with MintMap on sys.path.  The timeout is enforced: a hang fails
+    the test instead of blocking the test run."""
+    script = "import sys; sys.path.insert(0, %r)\n%s" % (SRC, code)
+    try:
+        return subprocess.run([sys.executable, "-I", "-c", script], capture_output=True, text=True,
+                              timeout=timeout)
+    except subprocess.TimeoutExpired:
+        raise AssertionError(f"did not finish within {timeout}s (hang)")
+
+
+def child_number_literal(text):
+    code = ("import ast\nfrom mintmap.core.settings_extract import number_literal\n"
+            "print(repr(number_literal(ast.parse(%r, mode='eval').body)))" % text)
+    proc = run_in_child(code, NUMBER_LIMIT_S)
+    assert proc.returncode == 0, proc.stderr
+    return proc.stdout.strip()
 
 
 class BoundsTests(unittest.TestCase):
@@ -54,9 +77,28 @@ class BoundsTests(unittest.TestCase):
     def test_nested_powers_are_not_computed(self):
         for text in ("(10 ** 1000) ** 1000", "((10 ** 1000) ** 1000) ** 1000", "10 ** 10 ** 10"):
             with self.subTest(text=text):
-                start = time.monotonic()
-                self.assertIsNone(number_literal(expr(text)))
-                self.assertLess(time.monotonic() - start, 1)
+                self.assertEqual(child_number_literal(text), "None")      # enforced by a timeout
+
+    def test_deep_expression_scans_as_before_folding_was_added(self):
+        # 950 terms: the scan finished on upstream main and must still finish (folding must not lower the limit)
+        code = ("import sys\nfrom mintmap.cli import main\nsys.exit(main(['scan', %r, '--json', %r]))\n"
+                % (self._deep_project(950), os.path.join(self._tmp, "deep.json")))
+        proc = run_in_child(code, SCAN_LIMIT_S)
+        self.assertEqual(proc.returncode, 0, proc.stderr[-400:])
+
+    def _deep_project(self, terms):
+        self._tmp = tempfile.mkdtemp(prefix="mintmap-v8-deep-")
+        self.addCleanup(shutil.rmtree, self._tmp, ignore_errors=True)
+        proj = os.path.join(self._tmp, "proj")
+        os.makedirs(os.path.join(proj, "site"))
+        for name, text in (("manage.py", "import os\nos.environ.setdefault('DJANGO_SETTINGS_MODULE', 'site.settings')\n"),
+                           (os.path.join("site", "__init__.py"), ""),
+                           (os.path.join("site", "urls.py"), "urlpatterns = []\n"),
+                           (os.path.join("site", "settings.py"),
+                            "ROOT_URLCONF = 'site.urls'\nPASSWORD_RESET_TIMEOUT = " + "+".join(["1"] * terms) + "\n")):
+            with open(os.path.join(proj, name), "w") as f:
+                f.write(text)
+        return proj
 
     def test_non_finite_results_stay_dynamic(self):
         for text in ("1e308 * 10", "1e308 * 10 - 1e308 * 10", "(1e308 * 10) * 0", "1e400 + 1", "-1e308 * 10"):
@@ -107,33 +149,36 @@ class FullScanTests(unittest.TestCase):
                     "MIDDLEWARE = ['django.contrib.auth.middleware.AuthenticationMiddleware']\n"
                     f"PASSWORD_RESET_TIMEOUT = {value}\n")
 
-    def cli(self, *argv):
-        buf = io.StringIO()
-        with contextlib.redirect_stdout(buf), contextlib.redirect_stderr(buf):
-            code = main(list(argv))
-        return code, buf.getvalue()
+    def mintmap(self, *argv):
+        code = "import sys\nfrom mintmap.cli import main\nsys.exit(main(sys.argv[1:]))\n"
+        script = "import sys; sys.path.insert(0, %r)\n%s" % (SRC, code)
+        try:
+            proc = subprocess.run([sys.executable, "-I", "-c", script, *argv], capture_output=True, text=True,
+                                  timeout=SCAN_LIMIT_S)
+        except subprocess.TimeoutExpired:
+            raise AssertionError(f"mintmap {argv[0]} did not finish within {SCAN_LIMIT_S}s (hang)")
+        return proc.returncode, proc.stdout + proc.stderr
 
     def test_dangerous_expressions_lock_and_diff_in_time(self):
         for name, text in self.CASES.items():
             with self.subTest(case=name):
                 self.write_settings(text)
                 start = time.monotonic()
-                code, out = self.cli("init", self.proj)
+                code, out = self.mintmap("init", self.proj)
                 self.assertEqual(code, 0, out)
-                code, out = self.cli("accept", self.proj, "--all", "--reviewer", "test")
+                code, out = self.mintmap("accept", self.proj, "--all", "--reviewer", "test")
                 self.assertEqual(code, 0, out)
-                code, out = self.cli("diff", self.proj)
-                elapsed = time.monotonic() - start
+                code, out = self.mintmap("diff", self.proj)
                 self.assertEqual(code, 0, out)
-                self.assertLess(elapsed, SCAN_LIMIT_S, f"{name} took {elapsed:.1f}s")
+                self.assertLess(time.monotonic() - start, SCAN_LIMIT_S, name)
                 os.remove(os.path.join(self.proj, "mintmap.lock"))
 
     def test_a_dynamic_power_still_counts_as_a_change(self):
         self.write_settings("10 ** 10 ** 10")
-        self.assertEqual(self.cli("init", self.proj)[0], 0)
-        self.assertEqual(self.cli("accept", self.proj, "--all", "--reviewer", "test")[0], 0)
+        self.assertEqual(self.mintmap("init", self.proj)[0], 0)
+        self.assertEqual(self.mintmap("accept", self.proj, "--all", "--reviewer", "test")[0], 0)
         self.write_settings("1")
-        code, out = self.cli("diff", self.proj)
+        code, out = self.mintmap("diff", self.proj)
         self.assertEqual(code, 4, out)
         self.assertIn("FINGERPRINT_CHANGED", out)
 
@@ -156,6 +201,46 @@ class PathStabilityTests(unittest.TestCase):
         self.assertEqual(now_paths, base["paths"])
         self.assertEqual(now["routes"], base["routes"])
         self.assertEqual(now["candidates"], base["candidates"])
+
+
+class NegativeLiteralTests(unittest.TestCase):
+    """A bare negative literal keeps the fingerprint it had on upstream main; `-60 * 60` matches `-3600`."""
+    FIXTURE = os.path.join(PROTO, "tests", "fixtures", "negative_literal_fingerprints_main.json")
+
+    def scan_fingerprints(self, settings_text):
+        tmp = tempfile.mkdtemp(prefix="mintmap-v8-neg-")
+        self.addCleanup(shutil.rmtree, tmp, ignore_errors=True)
+        proj = os.path.join(tmp, "proj")
+        os.makedirs(os.path.join(proj, "site"))
+        for name, text in (("manage.py", "import os\nos.environ.setdefault('DJANGO_SETTINGS_MODULE', 'site.settings')\n"),
+                           (os.path.join("site", "__init__.py"), ""),
+                           (os.path.join("site", "urls.py"), "urlpatterns = []\n"),
+                           (os.path.join("site", "settings.py"), settings_text)):
+            with open(os.path.join(proj, name), "w") as f:
+                f.write(text)
+        out = os.path.join(tmp, "scan.json")
+        code = "import sys\nfrom mintmap.cli import main\nsys.exit(main(['scan', %r, '--json', %r]))\n" % (proj, out)
+        proc = run_in_child(code, SCAN_LIMIT_S)
+        self.assertEqual(proc.returncode, 0, proc.stderr[-300:])
+        with open(out, encoding="utf-8") as f:
+            data = json.load(f)
+        fps = {}
+        for g in data["settings_groups"]:
+            fps.update(g["fingerprint"]["settings"])
+        return fps
+
+    def test_bare_negative_literal_keeps_its_upstream_fingerprint(self):
+        with open(self.FIXTURE, encoding="utf-8") as f:
+            fixture = json.load(f)
+        fps = self.scan_fingerprints(fixture["settings_text"])
+        for name, expected in fixture["fingerprints"].items():
+            with self.subTest(setting=name):
+                self.assertEqual(fps.get(name), expected)
+
+    def test_folded_negative_matches_the_bare_literal(self):
+        bare = self.scan_fingerprints("PASSWORD_RESET_TIMEOUT = -3600\n")
+        folded = self.scan_fingerprints("PASSWORD_RESET_TIMEOUT = -60 * 60\n")
+        self.assertEqual(folded["PASSWORD_RESET_TIMEOUT"], bare["PASSWORD_RESET_TIMEOUT"])
 
 
 if __name__ == "__main__":

@@ -106,6 +106,15 @@ def _bounded(v):
 
 
 def number_literal(e):
+    """(v8) The value of arithmetic on number literals alone, or None (see _literal_value).  A very deep expression
+    that exceeds the recursion limit stays dynamic, as it did before folding was added."""
+    try:
+        return _literal_value(e)
+    except RecursionError:
+        return None
+
+
+def _literal_value(e):
     """(v8) The value of arithmetic on number literals alone (`60 * 60`, `-3600`, `2 ** 10`), or None when it must
     stay dynamic.  Names, calls, attributes and strings are never evaluated: `60 * 60` and `3600` then have the same
     value and fingerprint.  Dynamic: an int or float literal of 2**64 or more, a non-finite float, a `**` whose
@@ -114,12 +123,12 @@ def number_literal(e):
     if isinstance(e, ast.Constant):
         return _bounded(e.value) if type(e.value) in (int, float) else None   # bool, complex and str are not numbers here
     if isinstance(e, ast.UnaryOp) and isinstance(e.op, (ast.UAdd, ast.USub)):
-        v = number_literal(e.operand)
+        v = _literal_value(e.operand)
         if v is None:
             return None
         return _bounded(-v if isinstance(e.op, ast.USub) else v)
     if isinstance(e, ast.BinOp) and type(e.op) in _NUMBER_BINOPS:
-        a, b = number_literal(e.left), number_literal(e.right)
+        a, b = _literal_value(e.left), _literal_value(e.right)
         if a is None or b is None:
             return None
         if isinstance(e.op, ast.Pow) and (not isinstance(b, int) or not 0 <= b <= _MAX_POW_EXPONENT):
@@ -145,6 +154,13 @@ def fold_numbers(node):
     """(v8) `node`, or a copy in which every arithmetic subtree on number literals is replaced by its value.  A bare
     negative literal (`-3600`) is kept as written, so its dump, and the lock entry of any group that only has such
     literals, do not change.  The copy is made only when there is an arithmetic subtree to fold."""
+    try:
+        return _fold_numbers(node)
+    except RecursionError:      # too deep to fold: keep the statement as written, as before
+        return node
+
+
+def _fold_numbers(node):
     if not any(isinstance(n, ast.BinOp) and number_literal(n) is not None for n in ast.walk(node)) and \
             not any(isinstance(n, ast.UnaryOp) and not isinstance(n.operand, ast.Constant)
                     and number_literal(n) is not None for n in ast.walk(node)):
@@ -424,9 +440,14 @@ class _Evaluator:
     def ev(self, e, env):
         if isinstance(e, ast.Constant):
             return e.value
-        if isinstance(e, (ast.BinOp, ast.UnaryOp)):
-            folded = number_literal(e)           # (v7) arithmetic on number literals: the number itself
+        bare_literal = isinstance(e, ast.UnaryOp) and isinstance(e.operand, ast.Constant)
+        if isinstance(e, (ast.BinOp, ast.UnaryOp)) and not bare_literal:
+            folded = number_literal(e)           # (v8) arithmetic on number literals: the number itself
             if folded is not None:
+                if isinstance(folded, (int, float)) and (folded < 0 or math.copysign(1.0, folded) < 0):
+                    # a negative result has the text of its bare literal (`-60 * 60` is `-3600`), so the two match
+                    # and a bare literal such as `-3600` keeps the fingerprint it had before
+                    return Dynamic(repr(folded))
                 return folded
         if isinstance(e, (ast.List, ast.Tuple, ast.Set)):
             out = []
