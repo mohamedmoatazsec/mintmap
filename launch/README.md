@@ -1,8 +1,9 @@
 # Launch kit
 
 Drafts for announcing MintMap. **This branch is not meant to be merged.** Every number in these drafts is from
-[docs/EVALUATION.md](../docs/EVALUATION.md). If you edit a draft, keep it that way: no "catches everything", no
-user counts, no comparisons nobody measured, and keep the word "experimental".
+[docs/EVALUATION.md](../docs/EVALUATION.md). If you edit a draft, keep it that way: no "every path" or "catches
+everything" in a title or anywhere else, no user counts, no comparisons nobody measured, say that the inventories
+and the verifier were AI agents, label development-set numbers as such, and keep the word "experimental".
 
 | File | For |
 |---|---|
@@ -11,15 +12,30 @@ user counts, no comparisons nobody measured, and keep the word "experimental".
 | [reddit-netsec.md](reddit-netsec.md) | r/netsec |
 | [django-forum.md](django-forum.md) | The Django Forum |
 | [social-thread.md](social-thread.md) | X and LinkedIn |
-| [blog-post.md](blog-post.md) | Blog post, "We measured how often our auth-path scanner misses things" (about 800 words) |
+| [blog-post.md](blog-post.md) | Blog post, "We measured how often our auth-path scanner misses things" (about 900 words) |
 
 ## Before you post anything
 
-1. Merge the launch-readiness pull request, so the README, the demo and the issue links exist on `main`.
-2. Publish the blog post somewhere with a stable URL. Several places below take a write-up but not a bare
+0. **Publish 0.6.0a2 to PyPI, and confirm that `pip install mintmap` works, before posting anything.** Merge the
+   launch-readiness pull request, then follow CONTRIBUTING.md, "Releasing" (first the pending trusted publisher
+   on PyPI and the protected `pypi` environment on GitHub), tag `v0.6.0a2` and publish the GitHub release. In a
+   fresh virtualenv, check that `pip install mintmap` installs 0.6.0a2 and that `mintmap --version` prints
+   `mintmap 0.6.0a2`. Until a release exists, anyone can register the name `mintmap` on PyPI, and readers (and
+   AI assistants) who type `pip install mintmap` would install their package. The drafts below tell people to run
+   `pip install mintmap`.
+1. Check that the launch-readiness pull request is merged, so the README, the demo and the issue links exist on
+   `main`. Then pin the Action snippet to the release: in a docs commit, replace `@v0.6.0a2` in README.md and
+   examples/mintmap.yml with the tag's full commit SHA (CONTRIBUTING.md, "Releasing", step 5).
+2. Check that private vulnerability reporting is on: `gh api repos/mohamedmoatazsec/mintmap/private-vulnerability-reporting`
+   prints `{"enabled":true}`. SECURITY.md, the issue chooser and CODE_OF_CONDUCT.md link to it.
+3. Repository settings, because link cards on HN, Reddit and X show them: set the About description to the
+   README tagline ("A reviewed map of the code paths that create a login session or credential in a Django app,
+   enforced in CI."), upload `docs/assets/social-preview.png` under Settings, General, Social preview, and add
+   topics (django, security, authentication, static-analysis, appsec, ci, github-actions, python).
+4. Publish the blog post somewhere with a stable URL. Several places below take a write-up but not a bare
    repository link.
-3. Be online for a few hours after each post. People will ask about the miss rate; answer with the numbers.
-4. Spread the posts over a week or two. The same link in five places on one day reads as spam.
+5. Be online for a few hours after each post. People will ask about the miss rate; answer with the numbers.
+6. Spread the posts over a week or two. The same link in five places on one day reads as spam.
 
 ## Where to submit, and the rules
 
