@@ -74,8 +74,13 @@ runs:
         args=(diff "$MM_PROJECT" --json "$findings")
         if [ -n "$MM_LOCK" ]; then args+=(--lock "$MM_LOCK"); fi
         if [ -n "$MM_LIBS" ]; then args+=(--library-path "$MM_LIBS"); fi
+        # Text from the pull request appears in MintMap's output; stop the runner from reading workflow commands
+        # (`::error::`, `::add-mask::`, ...) in it. The token is random, so the output cannot end the pause.
+        stop="$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n')"
+        echo "::stop-commands::$stop"
         "${run[@]}" "${args[@]}"
         code=$?
+        echo "::$stop::"
         echo "exit-code=$code" >> "$GITHUB_OUTPUT"
         echo "findings=$findings" >> "$GITHUB_OUTPUT"
         "${run[@]}" --summary "$findings" "$code" >> "$GITHUB_STEP_SUMMARY"

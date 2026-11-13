@@ -301,6 +301,14 @@ class ActionTests(unittest.TestCase):
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
         self.assertIn("exit-code=0", out)
         self.assertIn("No changes", summary)
+        # workflow commands are paused while MintMap prints text from the pull request, with a random token
+        lines = r.stdout.splitlines()
+        stop = [ln for ln in lines if re.fullmatch(r"::stop-commands::[0-9a-f]{32}", ln)]
+        self.assertEqual(len(stop), 1, r.stdout)
+        token = stop[0].rsplit("::", 1)[1]
+        self.assertIn(f"::{token}::", lines)
+        self.assertLess(lines.index(stop[0]), lines.index("exit 0 (ok)"))
+        self.assertLess(lines.index("exit 0 (ok)"), lines.index(f"::{token}::"))
         r, out, _ = step(root, fail_on="08")              # decimal 8, not an octal error that skips the check
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
         self.assertNotIn("value too great", r.stderr)
@@ -331,6 +339,30 @@ class ActionTests(unittest.TestCase):
         self.assertIn("could not run", r.stdout)
         self.assertIn("mintmap init <project_dir>", summary)
         self.assertNotIn("fingerprint_changed", summary)  # a fresh findings file per run, not the previous one
+
+
+class OutputTests(unittest.TestCase):
+    def test_text_from_the_project_cannot_start_an_output_line(self):
+        # A route string (any text from the pull request) must not start a line that a CI runner reads as a
+        # workflow command such as ::error:: or ::add-mask::.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = os.path.join(tmp, "demo")
+            shutil.copytree(os.path.join(PROTO, "examples", "demo"), root)
+            src = read(root, "members/urls.py")
+            evil = '    path("x/\\n::error title=MintMap::no changes\\r\\n", views.sign_in, name="x"),\n'
+            write(root, "members/urls.py", src.replace("urlpatterns = [\n", "urlpatterns = [\n" + evil, 1))
+            r = run("diff", root)
+            self.assertEqual(r.returncode & 1, 1, r.stdout + r.stderr)
+            lines = (r.stdout + r.stderr).splitlines()
+            self.assertFalse([ln for ln in lines if ln.lstrip().startswith("::")], r.stdout)
+            self.assertIn("\\n::error", r.stdout)
+            # the same for the text report of `scan` (route strings, entry ids, gap details, reasons)
+            r = run("scan", root)
+            self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+            lines = (r.stdout + r.stderr).splitlines()
+            self.assertFalse([ln for ln in lines if ln.lstrip().startswith("::")], r.stdout)
+            self.assertIn("\\n::error", r.stdout)
+            self.assertIn("\\r\\n", r.stdout)
 
 
 if __name__ == "__main__":

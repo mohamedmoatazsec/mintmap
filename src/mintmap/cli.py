@@ -128,6 +128,12 @@ def review_queue(report: dict) -> list:
 WATCHED_SHOWN = 15
 
 
+def _one_line(text: object) -> str:
+    """Text from the analysed code on one output line: control, format and line-separator characters are escaped,
+    so a string in a pull request cannot start a line that CI runners read as a command (for example `::error::`)."""
+    return "".join(ch if ch.isprintable() else ch.encode("unicode_escape").decode("ascii") for ch in str(text))
+
+
 def summarize(report: dict) -> str:
     cov = report["coverage"]
     lines = [f"MintMap {report['tool']['version']}  project={report['project']}",
@@ -188,7 +194,8 @@ def summarize(report: dict) -> str:
     if len(cov["gaps"]) > 40:
         lines.append(f"  ... {len(cov['gaps']) - 40} more (see --json)")
     lines.append(f"catalog entries not mapped to symbols: {len(report['tool']['catalog_entries_unmapped'])}")
-    return "\n".join(lines)
+    # route strings, gap details, reasons and file names come from the analysed code: one output line each
+    return "\n".join(_one_line(line) for line in lines)
 
 
 def _load_lock(lock_path: str):
@@ -249,7 +256,7 @@ def run_accept(args, lock_path: str) -> int:
         e["review_status"] = "accepted"
         e["reviewer"] = args.reviewer
         e["policy_note"] = args.note
-        print(f"accepted {e['id']}")
+        print(f"accepted {_one_line(e['id'])}")
     with open(lock_path, "w") as fh:
         fh.write(dump(lock))
     left = sum(1 for e in entries if e.get("review_status") != "accepted")
@@ -333,7 +340,7 @@ def main(argv=None) -> int:
         with open(lock_path, "w") as fh:
             fh.write(dump(new))
         for n in notes:
-            print(n)
+            print(_one_line(n))
         print(f"updated {lock_path}: {len(new['paths'])} path(s)")
         return 0
     findings, code = diff(lock, report)
@@ -341,7 +348,7 @@ def main(argv=None) -> int:
         with open(args.json, "w") as fh:
             fh.write(dump(dict(exit_code=code, findings=findings)))
     for f in findings:
-        print(f"{f['kind'].upper():22} {f['path_id'] or '-':17} {f['message']}")
+        print(f"{f['kind'].upper():22} {_one_line(f['path_id'] or '-'):17} {_one_line(f['message'])}")
     names = [n for b, n in sorted(BIT_NAMES.items()) if code & b]
     print(f"exit {code} ({', '.join(names) or 'ok'})")
     return code
@@ -365,7 +372,7 @@ def entry(argv=None) -> int:
     except Exception as exc:  # RecursionError, OSError from a dangling symlink, malformed lock, ...
         import traceback
         traceback.print_exc()
-        print(f"mintmap: internal error: {type(exc).__name__}: {exc}", file=sys.stderr)
+        print(f"mintmap: internal error: {type(exc).__name__}: {_one_line(exc)}", file=sys.stderr)
         return EXIT_ERROR
 
 
