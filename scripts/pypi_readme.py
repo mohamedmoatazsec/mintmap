@@ -1,10 +1,12 @@
 """Rewrite README.md for PyPI: relative links and images become absolute GitHub URLs at one tag.
 
-    python scripts/pypi_readme.py v0.6.0a1
+    python scripts/pypi_readme.py v0.6.0a2
 
 PyPI renders the README outside the repository, so relative links (docs/..., examples/..., LICENSE) would be
-broken there. The release workflow runs this before building; the README in the repository is not changed by a
-commit. Standard library only.
+broken there; images become raw.githubusercontent.com URLs. PyPI does not render Mermaid, so the diagram becomes
+a link to it on GitHub. In-page links (#accuracy, ...) are kept: PyPI's renderer gives headings matching ids. The
+release workflow runs this before building; the README in the repository is not changed by a commit. Standard
+library only.
 """
 import os
 import re
@@ -22,7 +24,7 @@ def absolute(text: str, ref: str) -> str:
         target = m.group(2)
         if re.match(r"[a-z][a-z0-9+.-]*:|#|//", target):
             return m.group(0)
-        return f"{m.group(1)}({blob}{target})"
+        return f"{m.group(1)}({blob}{target.removeprefix('./')})"
 
     def image(m):
         target = m.group(2)
@@ -30,6 +32,16 @@ def absolute(text: str, ref: str) -> str:
             return m.group(0)
         return f'{m.group(1)}"{raw}{target}"'
 
+    def md_image(m):
+        target = m.group(2)
+        if re.match(r"[a-z][a-z0-9+.-]*:|//", target):
+            return m.group(0)
+        return f"{m.group(1)}{raw}{target.removeprefix('./')})"
+
+    # PyPI does not render Mermaid: point to the diagram on GitHub instead of showing its source
+    diagram = f"*(Diagram: see the [README on GitHub]({blob}README.md#how-it-works).)*"
+    text = re.sub(r"```mermaid\n.*?\n```", lambda m: diagram, text, flags=re.S)
+    text = re.sub(r"(!\[[^\]]*\]\()([^)\s]+)\)", md_image, text)   # Markdown images: raw file URLs
     text = re.sub(r"(\]\s*)\(([^)\s]+)\)", link, text)
     return re.sub(r'(<img\b[^>]*?\bsrc=)"([^"]+)"', image, text)
 

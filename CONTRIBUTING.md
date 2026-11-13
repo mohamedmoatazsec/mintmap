@@ -71,7 +71,7 @@ These reports are the most useful thing you can send.
 2. Put the files in an empty directory with a `manage.py` that names the settings module, and run:
 
    ```bash
-   mintmap --version
+   mintmap --version              # 0.6.0a1 has no --version: give the commit, or the first line of `mintmap scan`
    mintmap scan <dir> --json report.json
    ```
 
@@ -130,11 +130,32 @@ while. That is not a sign that it is unwelcome.
 
 For the maintainer.
 
-1. Set the version in `pyproject.toml` and `TOOL_VERSION` in `src/mintmap/core/analysis.py` (a test checks that
-   they match). Move the "Unreleased" notes in `CHANGELOG.md` under the new version.
+One-time setup, before the first release (0.6.0a2; the `v0.6.0a1` tag predates the release workflow):
+
+- On PyPI, add a *pending* trusted publisher (Account settings, Publishing) for the project name `mintmap`: owner
+  `mohamedmoatazsec`, repository `mintmap`, workflow `release.yml`, environment `pypi`. A pending publisher does
+  not reserve the name, so make the first release right after adding it.
+- On GitHub, create the environment `pypi` (Settings, Environments) with yourself as a required reviewer and a
+  deployment rule that allows only tags matching `v*`. The publish job then waits for your approval, and no branch
+  can publish.
+
+Each release:
+
+1. Set the version in `pyproject.toml`, `TOOL_VERSION` in `src/mintmap/core/analysis.py` (a test checks that
+   they match), `version` in `CITATION.cff` and the `placeholder` of the version field in both issue templates.
+   Move the "Unreleased" notes in `CHANGELOG.md` under the new version. Update the install lines and the Action
+   snippet (`@v<version>`) in `README.md` and `examples/mintmap.yml`: the README is also the PyPI page.
 2. Tag `v<version>` and publish a GitHub release for the tag.
 3. `.github/workflows/release.yml` then checks that the tag matches the version, runs the tests and the demo,
-   builds the sdist and wheel and uploads them to PyPI with Trusted Publishing. No API token is involved.
+   builds the sdist and wheel with the hash-pinned tools in `.github/release-requirements.txt` and, after your
+   approval of the `pypi` environment, uploads them to PyPI with Trusted Publishing. No API token is involved.
+4. Check that `pip install mintmap==<version>` works in a fresh virtualenv **before** announcing the release
+   anywhere: until a release exists, anyone can register the name `mintmap` on PyPI.
+5. In a docs commit right after the release, replace `mohamedmoatazsec/mintmap@v<version>` in `README.md` and
+   `examples/mintmap.yml` with the tag's full commit SHA and a `# v<version>` comment
+   (`git ls-remote https://github.com/mohamedmoatazsec/mintmap refs/tags/v<version>`). A commit cannot contain its
+   own SHA, so the SHA always lands after the release.
 
-The PyPI project trusts this publisher: owner `mohamedmoatazsec`, repository `mintmap`, workflow `release.yml`,
-environment `pypi`.
+If the `description` in `pyproject.toml` changes, re-render `docs/assets/social-preview.png` with
+`python scripts/render_social_preview.py` (needs Node.js with Playwright) and upload it under Settings, General,
+Social preview.
