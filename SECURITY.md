@@ -5,9 +5,11 @@
 Please report it privately through GitHub:
 **[Report a vulnerability](https://github.com/mohamedmoatazsec/mintmap/security/advisories/new)**
 (the repository's *Security* tab, then *Report a vulnerability*). Do not open a public issue for it.
+If the *Report a vulnerability* button is missing, open an issue titled "Security contact request" with no
+details, and the maintainer will reply with a private channel.
 
-Include the MintMap version (`mintmap --version` or the commit), what an attacker can do, and the smallest input
-or pull request that shows it.
+Include the MintMap version (`mintmap --version`; 0.6.0a1 has no `--version`, so give `pip show mintmap` or the
+commit), what an attacker can do, and the smallest input or pull request that shows it.
 
 MintMap is maintained by one person in their spare time. You will get an answer as soon as that allows; there is
 no guaranteed response time. Fixes are made on `main` and released as a new version. Only the latest release is

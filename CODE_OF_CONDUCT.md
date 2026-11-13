@@ -36,7 +36,7 @@ This Code of Conduct applies within all community spaces, and also applies when 
 
 ## Enforcement
 
-Instances of abusive, harassing, or otherwise unacceptable behavior may be reported to the community leaders responsible for enforcement through a private report at https://github.com/mohamedmoatazsec/mintmap/security/advisories/new, or through the contact details on the maintainer's GitHub profile (https://github.com/mohamedmoatazsec). All complaints will be reviewed and investigated promptly and fairly.
+Instances of abusive, harassing, or otherwise unacceptable behavior may be reported to the community leaders responsible for enforcement through a private report at https://github.com/mohamedmoatazsec/mintmap/security/advisories/new (the repository's Security tab, then Report a vulnerability). If that form is unavailable, open an issue titled "Conduct contact request" with no details, and the maintainer will reply with a private channel. All complaints will be reviewed and investigated promptly and fairly.
 
 All community leaders are obligated to respect the privacy and security of the reporter of any incident.
 

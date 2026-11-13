@@ -11,7 +11,7 @@ body:
     id: version
     attributes:
       label: MintMap version
-      description: Output of `mintmap --version`, or the commit you run.
+      description: Output of `mintmap --version`. 0.6.0a1 has no `--version`; for it, give the output of `pip show mintmap` or the commit you run.
       placeholder: mintmap 0.6.0a1
     validations:
       required: true
