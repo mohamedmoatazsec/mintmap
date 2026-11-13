@@ -14,7 +14,7 @@ templates or migrations and is not meant to be run.
 
 - `mintmap.lock` is the reviewed baseline: every entry was accepted with `mintmap accept --all`.
 - `bad-pr.patch` is the "pull request": it makes `sign_in_code` call `form.is_valid()` without using the result,
-  so any six characters pass the TOTP step.
+  so any code passes the TOTP step.
 
 Run the whole demo from the repository root:
 
