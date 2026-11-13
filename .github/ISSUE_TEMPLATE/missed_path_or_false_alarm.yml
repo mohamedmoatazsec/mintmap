@@ -1,0 +1,58 @@
+name: Missed path or false alarm
+description: MintMap did not report a way to get a session or credential, reported something that is not one, or diff passed or failed when it should not have.
+body:
+  - type: markdown
+    attributes:
+      value: |
+        These reports are the most useful ones. A small snippet is worth more than a long description.
+        Please write the snippet for this report: do not paste code from a private or GPL-licensed project.
+  - type: dropdown
+    id: kind
+    attributes:
+      label: What happened?
+      options:
+        - "Silent miss: a credential path is neither reported nor listed as a gap"
+        - "Partly seen: only a candidate, a watched site or a gap points to it"
+        - "False alarm: a reported path is not a credential path"
+        - "diff passed (exit 0) on a harmful change"
+        - "diff failed on a harmless change"
+        - "Check evidence is wrong or too weak"
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: MintMap version
+      description: Output of `mintmap --version`, or the commit you run.
+      placeholder: mintmap 0.6.0a1
+    validations:
+      required: true
+  - type: textarea
+    id: snippet
+    attributes:
+      label: Minimal Django snippet
+      description: The view, its URL pattern and the relevant settings. For a diff problem, the code before and after the change.
+      render: python
+    validations:
+      required: true
+  - type: textarea
+    id: output
+    attributes:
+      label: What MintMap printed
+      description: The relevant lines of `mintmap scan` or `mintmap diff`. Real output, please, not retyped.
+      render: text
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected, and why
+      description: For a miss, which line creates the session or credential. For a false alarm, why it is not one.
+    validations:
+      required: true
+  - type: input
+    id: libraries
+    attributes:
+      label: Libraries involved
+      description: Auth-related packages and versions, if any.
+      placeholder: djangorestframework 3.18, django-allauth 65.20
