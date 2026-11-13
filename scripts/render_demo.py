@@ -50,12 +50,19 @@ def style(line: str) -> str:
 
 def wrap(line: str) -> list:
     parts = []
+    indent = " " * (len(line) - len(line.lstrip()) + 4)     # continuation lines sit under the text they continue
     while len(line) > COLS:
         cut = line.rfind(" ", 0, COLS)
         cut = cut if cut > COLS // 2 else COLS
         parts.append(line[:cut])
-        line = "    " + line[cut:].lstrip()
+        line = indent + line[cut:].lstrip()
     return parts + [line]
+
+
+def nbsp(text: str) -> str:
+    """Spaces as no-break spaces: browsers collapse runs of ordinary spaces in SVG text (xml:space is not honoured
+    everywhere), which loses the indentation and stretches the glyphs to the text length."""
+    return text.replace(" ", "&#160;")
 
 
 def render(text: str) -> str:
@@ -84,7 +91,7 @@ def render(text: str) -> str:
         if part:
             weight = ' font-weight="bold"' if kind in ("command", "bad", "good") else ""
             out.append(f'<text x="{PAD}" y="{y}" fill="{COLOURS[kind]}"{weight} '
-                       f'textLength="{len(part) * CHAR_W:.1f}" lengthAdjust="spacingAndGlyphs">{escape(part)}</text>')
+                       f'textLength="{len(part) * CHAR_W:.1f}" lengthAdjust="spacingAndGlyphs">{nbsp(escape(part))}</text>')
         y += LINE_H
     out += ["</g>", "</svg>", ""]
     return "\n".join(out)

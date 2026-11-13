@@ -34,7 +34,7 @@ show() { printf '$ %s\n' "$1"; }
 work="$(mktemp -d)" || exit 1
 trap 'rm -rf "$work"' EXIT
 
-say "1. Every way to get signed in to the demo project (the full report: mintmap scan examples/demo)"
+say "1. What MintMap finds in the demo: 3 logins, 1 API token, the two-step sign-in marker, 1 candidate"
 show "mintmap scan examples/demo | grep -E '^ +\[[0-9a-f]{16}\] (high|medium|low)'"
 mintmap scan examples/demo | grep -E '^ +\[[0-9a-f]{16}\] (high|medium|low)'
 
@@ -45,7 +45,7 @@ clean=$?
 
 say "3. A pull request makes the TOTP step ignore the result of its check"
 cp -R examples/demo "$work/pr"
-show "git apply examples/demo/bad-pr.patch   # on a temporary copy"
+show "git apply bad-pr.patch   # in a temporary copy of examples/demo"
 grep -E '^[-+][^-+]' examples/demo/bad-pr.patch
 (cd "$work/pr" && git apply bad-pr.patch) || { echo "demo FAILED: the patch does not apply" >&2; exit 1; }
 
@@ -58,7 +58,7 @@ echo "$bad"
 
 echo
 if [ "$clean" -eq 0 ] && [ "$bad" -eq 12 ]; then
-  echo "demo ok: the reviewed code exits 0, the bad pull request exits 12 (fingerprint_changed + evidence_downgraded), and CI fails."
+  echo "demo ok: exit 0 on the reviewed code, exit 12 on the bad pull request, so CI fails."
   exit 0
 fi
 echo "demo FAILED: expected exit codes 0 and 12, got $clean and $bad" >&2
