@@ -52,6 +52,26 @@ class CliTests(unittest.TestCase):
         self.assertEqual(run("update", self.root, "--lock", self.lock).returncode, 0)
         self.assertEqual(run("diff", self.root, "--lock", self.lock).returncode, 64)  # changed path needs review
 
+    def test_scan_all_gaps_lists_every_gap(self):
+        # 45 views that call a `login` they received as a parameter: each is a possible_mint_call_unresolved gap
+        for i in range(45):
+            write(self.root, f"accounts/extra_{i}.py",
+                  f"def start_{i}(request, user, login):\n    return login(request, user)\n")
+        out = os.path.join(self.root, "out.json")
+        default = run("scan", self.root, "--json", out)
+        self.assertEqual(default.returncode, 0, default.stderr)
+        with open(out) as fh:
+            total = len(json.load(fh)["coverage"]["gaps"])
+        self.assertGreater(total, 40)
+        lines = default.stdout.splitlines()
+        self.assertEqual(sum(1 for x in lines if x.startswith("  gap ")), 40)
+        self.assertIn(f"  ... {total - 40} more (see --json, or use --all-gaps)", lines)
+        full = run("scan", self.root, "--all-gaps")
+        self.assertEqual(full.returncode, 0, full.stderr)
+        self.assertEqual(sum(1 for x in full.stdout.splitlines() if x.startswith("  gap ")), total)
+        self.assertNotIn("more (see --json", full.stdout)
+        self.assertIn("--all-gaps", run("scan", "--help").stdout)
+
     def test_usage_and_input_errors_exit_128(self):
         self.assertEqual(run("diff").returncode, 128)
         self.assertEqual(run("diff", self.root, "--lock", os.path.join(self.root, "missing.lock")).returncode, 128)

@@ -149,7 +149,7 @@ git add path/to/django/project/mintmap.lock && git commit -m "Add reviewed MintM
 
 | Command | What it does |
 |---|---|
-| `mintmap scan <dir>` | Prints the review queue, the check evidence of each path it reports and the gaps. `--json out.json` writes the full report |
+| `mintmap scan <dir>` | Prints the review queue, the check evidence of each path it reports and the gaps. `--json out.json` writes the full report; `--all-gaps` lists every gap (the text report shows the first 40) |
 | `mintmap init <dir>` | Writes `mintmap.lock` with every entry unreviewed |
 | `mintmap accept <dir> ...` | Records a review: `--group <group>`, `--all`, or entry ids, with `--reviewer <name>` |
 | `mintmap diff <dir>` | Compares the code with the lock and exits with a [bitmask](#exit-codes). This is what CI runs |

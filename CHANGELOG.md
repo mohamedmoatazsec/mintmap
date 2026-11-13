@@ -4,6 +4,8 @@
 
 No change to the analysis, the catalog, fingerprints or the lock format.
 
+- `mintmap scan --all-gaps` lists every gap in the text report (by default the first 40 are listed); the
+  "... N more" line now names the option. Report formatting only.
 - `action.yml`: the description no longer contains an apostrophe, which the GitHub Marketplace page dropped
   ("MintMap s own coverage"). It now ends "or what MintMap can analyse changes."
 - The author shown on PyPI (`pyproject.toml`) and in `CITATION.cff` is `mohamedmoatazsec`.
