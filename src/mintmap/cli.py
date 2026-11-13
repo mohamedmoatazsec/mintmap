@@ -127,7 +127,7 @@ def review_queue(report: dict) -> list:
 WATCHED_SHOWN = 15
 
 
-def summarize(report: dict) -> str:
+def summarize(report: dict, *, all_gaps: bool = False) -> str:
     cov = report["coverage"]
     lines = [f"MintMap {report['tool']['version']}  project={report['project']}",
              f"files parsed {cov['files_parsed']}/{cov['files_seen']}  parse failures {len(cov['parse_failures'])}  "
@@ -182,10 +182,11 @@ def summarize(report: dict) -> str:
         if len(off) > 20:
             lines.append(f"  ... {len(off) - 20} more (see --json)")
     lines.append(f"gaps by type: {cov['gaps_by_type'] or '{}'}")
-    for g in cov["gaps"][:40]:
+    gaps = cov["gaps"]
+    for g in gaps if all_gaps else gaps[:40]:
         lines.append(f"  gap {g['type']}: {g['file']} {g['where']} :: {g['detail']}")
-    if len(cov["gaps"]) > 40:
-        lines.append(f"  ... {len(cov['gaps']) - 40} more (see --json)")
+    if not all_gaps and len(gaps) > 40:
+        lines.append(f"  ... {len(gaps) - 40} more (see --json or --all-gaps)")
     lines.append(f"catalog entries not mapped to symbols: {len(report['tool']['catalog_entries_unmapped'])}")
     return "\n".join(lines)
 
@@ -276,7 +277,9 @@ def main(argv=None) -> int:
                              "unpacked wheels); repeatable or os.pathsep-separated. Used to resolve library view "
                              "aliases, re-exports and class bases. Nothing is imported.")
         sp.add_argument("--json", help="write the full report / findings as JSON")
-        if name != "scan":
+        if name == "scan":
+            sp.add_argument("--all-gaps", action="store_true", help="show every gap in the text report")
+        else:
             sp.add_argument("--lock", help="lock file (default: <project_dir>/mintmap.lock)")
         if name == "init":
             sp.add_argument("--force", action="store_true")
@@ -313,7 +316,7 @@ def main(argv=None) -> int:
         if args.json:
             with open(args.json, "w") as fh:
                 fh.write(dump(report))
-        print(summarize(report))
+        print(summarize(report, all_gaps=args.all_gaps))
         return 0
     if args.cmd == "init":
         if os.path.exists(lock_path) and not args.force:
