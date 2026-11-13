@@ -1,4 +1,4 @@
-name: MintMap
+name: MintMap for Django
 description: Fail a pull request when a reviewed Django login/credential path, its code or checks, or MintMap's own coverage changes.
 branding:
   icon: lock
