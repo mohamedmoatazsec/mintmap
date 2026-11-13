@@ -25,5 +25,5 @@ htmlcov/
 .vscode/
 .DS_Store
 
-# MintMap run output (keep mintmap.lock files in your own projects; none belong in this repo)
+# MintMap run output (the only lock in this repo is the demo's: examples/demo/mintmap.lock)
 mintmap-findings.json
