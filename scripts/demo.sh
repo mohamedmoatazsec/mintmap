@@ -3,7 +3,7 @@
 #
 #   bash scripts/demo.sh
 #
-# Runs the MintMap in this checkout (nothing is installed; only Python 3.11+ and git are needed), on the demo
+# Runs the MintMap in this checkout (nothing is installed; Python 3.11 or newer and git are needed), on the demo
 # project in examples/demo. The bad change (examples/demo/bad-pr.patch) is applied to a temporary copy, so the
 # checkout is not modified. Exits 0 only if both diffs return the expected exit codes (0, then 12); the CI job
 # "demo" runs this script, so the demo in the README cannot go stale.
@@ -15,6 +15,16 @@ cd "$root" || exit 1
 py="${PYTHON:-}"
 if [ -z "$py" ]; then
   if command -v python3 >/dev/null 2>&1; then py=python3; else py=python; fi
+fi
+if ! command -v "$py" >/dev/null 2>&1; then
+  echo "demo: no Python found ($py). MintMap needs Python 3.11 or newer." >&2
+  echo "Point the demo at one, for example: PYTHON=/path/to/python3 bash scripts/demo.sh" >&2
+  exit 128
+fi
+if ! "$py" -c 'import sys; sys.exit(sys.version_info < (3, 11))' >/dev/null 2>&1; then
+  echo "demo: MintMap needs Python 3.11 or newer ($py is $("$py" -V 2>&1))." >&2
+  echo "Run it with a newer one, for example: PYTHON=python3.12 bash scripts/demo.sh" >&2
+  exit 128
 fi
 
 mintmap() { "$py" -I "$root/scripts/run_mintmap.py" "$@"; }
