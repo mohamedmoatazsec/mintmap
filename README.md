@@ -7,6 +7,7 @@
 [![python: 3.11 | 3.12 | 3.13 | 3.14](https://img.shields.io/badge/python-3.11%20%7C%203.12%20%7C%203.13%20%7C%203.14-blue)](pyproject.toml)
 [![status: experimental](https://img.shields.io/badge/status-experimental-orange)](#accuracy)
 [![release](https://img.shields.io/github/v/release/mohamedmoatazsec/mintmap?include_prereleases&label=release)](https://github.com/mohamedmoatazsec/mintmap/releases)
+[![PyPI](https://img.shields.io/pypi/v/mintmap)](https://pypi.org/project/mintmap/)
 
 > **Status: experimental (0.6.0a2; the analysis and catalog are those evaluated as 0.6.0a1).** MintMap was built
 > on eight open-source Django projects, then frozen and tested on three it had never seen (CVAT, Label Studio,
@@ -182,15 +183,15 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      # Replace the tag with the release's full commit SHA (keep the tag as a comment): a tag can be moved.
-      - uses: mohamedmoatazsec/mintmap@v0.6.0a2
+      # Pinned to the full commit SHA of the release (the tag is kept as a comment): a tag can be moved.
+      - uses: mohamedmoatazsec/mintmap@030bf616d4553bb546efbcd08ade12040175a894 # v0.6.0a2
         with:
           project-dir: .
 ```
 
-To pin the full commit SHA of a release tag, look it up with
-`git ls-remote https://github.com/mohamedmoatazsec/mintmap refs/tags/v0.6.0a2` and write
-`mohamedmoatazsec/mintmap@<sha> # v0.6.0a2`.
+The snippet pins the full commit SHA of the `v0.6.0a2` tag. To pin another release, look its SHA up with
+`git ls-remote https://github.com/mohamedmoatazsec/mintmap refs/tags/<tag>` and write
+`mohamedmoatazsec/mintmap@<sha> # <tag>`.
 
 The job fails on any finding (configurable with `fail-on`; exit 128, "MintMap could not run", always fails) and
 writes a summary table to the job page. The action runs MintMap from its own checkout with `python -I`, so files
