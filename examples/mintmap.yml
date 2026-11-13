@@ -19,8 +19,8 @@ jobs:
           persist-credentials: false
       # Keep this job free of code from the pull request: do not install the project's dependencies or run its
       # tests here before MintMap (see docs/ENFORCEMENT.md, section 4). MintMap needs neither.
-      # Replace the tag with the release's full commit SHA (keep the tag as a comment): a tag can be moved.
+      # Pinned to the full commit SHA of the release (the tag is kept as a comment): a tag can be moved.
       # git ls-remote https://github.com/mohamedmoatazsec/mintmap refs/tags/v0.6.0a2
-      - uses: mohamedmoatazsec/mintmap@v0.6.0a2
+      - uses: mohamedmoatazsec/mintmap@030bf616d4553bb546efbcd08ade12040175a894 # v0.6.0a2
         with:
           project-dir: .
