@@ -24,7 +24,7 @@ from .settings_extract import extract_settings, drf_auth_classes, canonical_valu
     Alternatives
 from .urlconf import UrlConfParser, find_root_urlconfs, Route, mark_shadowing, ENDPOINT_KINDS
 
-TOOL_VERSION = "0.6.0a1"
+TOOL_VERSION = "0.6.0a2"
 
 HTTP_VERBS = ["get", "post", "put", "patch", "delete", "head", "options"]
 ALWAYS_DISPATCHED = ["dispatch", "setup"]

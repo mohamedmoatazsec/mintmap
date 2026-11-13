@@ -46,7 +46,12 @@ version.
 | 4 | **v6 frozen (released as 0.6.0a1)**, with v5 as a control | **CVAT, Label Studio, Tandoor** | **held-out** |
 
 Release 0.6.0a1 is the frozen v6 tree (tag `v0.6.0.dev0-frozen`, commit `fed05c8`) plus documentation and the
-version string. No analysis code changed after freezing.
+version string. No analysis code changed after freezing. Release 0.6.0a2 has the same analysis and catalog, plus
+three fixes that do not change results on these projects: it runs on Python 3.14, it no longer reads symbolic links
+that leave the project or special files, and it escapes control characters in its text output. Its `scan --json`
+reports of CVAT, Label Studio, Tandoor and Healthchecks are identical to those of the frozen v6 tree on Python 3.11
+and 3.13 (apart from the version string and a new, empty `coverage.dependency_files_not_read` list), and its
+reports on Python 3.14, where only 0.6.0a2 runs, are identical to the frozen tree's on 3.13.
 
 ## Method
 

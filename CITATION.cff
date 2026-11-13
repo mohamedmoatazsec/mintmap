@@ -5,7 +5,7 @@ type: software
 authors:
   - name: "MintMap contributors"
     website: "https://github.com/mohamedmoatazsec/mintmap/graphs/contributors"
-version: "0.6.0a1"
+version: "0.6.0a2"
 license: Apache-2.0
 repository-code: "https://github.com/mohamedmoatazsec/mintmap"
 url: "https://github.com/mohamedmoatazsec/mintmap"

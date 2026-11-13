@@ -8,12 +8,13 @@
 [![status: experimental](https://img.shields.io/badge/status-experimental-orange)](#accuracy)
 [![release](https://img.shields.io/github/v/release/mohamedmoatazsec/mintmap?include_prereleases&label=release)](https://github.com/mohamedmoatazsec/mintmap/releases)
 
-> **Status: experimental (0.6.0a1).** MintMap was built on eight open-source Django projects, then frozen and
-> tested on three it had never seen (CVAT, Label Studio, Tandoor). There it linked 28 of 66 credential paths to the
-> right route, pointed to 30 more only indirectly (an unlinked mint, a candidate or a named gap) and missed 8 (12%)
-> with no warning. 43% of the paths it reported were false alarms, and `diff` let 23 of 65 harmful test changes
-> through. (The previous release, 0.5.0a1, missed 30% with no warning on an earlier, harder set of unseen projects.)
-> It is a review aid, not a guarantee. Read [Accuracy](#accuracy) first.
+> **Status: experimental (0.6.0a2; the analysis and catalog are those evaluated as 0.6.0a1).** MintMap was built
+> on eight open-source Django projects, then frozen and tested on three it had never seen (CVAT, Label Studio,
+> Tandoor). There it linked 28 of 66 credential paths to the right route, pointed to 30 more only indirectly (an
+> unlinked mint, a candidate or a named gap) and missed 8 (12%) with no warning. 43% of the paths it reported were
+> false alarms, and `diff` let 23 of 65 harmful test changes through. (The previous release, 0.5.0a1, missed 30%
+> with no warning on an earlier, harder set of unseen projects.) It is a review aid, not a guarantee. Read
+> [Accuracy](#accuracy) first.
 
 In a Django app the ways to get logged in are scattered: the login view, auto-login after sign-up or password
 reset, SSO callbacks, magic links, two-factor steps, API tokens, admin impersonation. Any pull request can add one
@@ -152,7 +153,7 @@ git add path/to/django/project/mintmap.lock && git commit -m "Add reviewed MintM
 | `mintmap accept <dir> ...` | Records a review: `--group <group>`, `--all`, or entry ids, with `--reviewer <name>` |
 | `mintmap diff <dir>` | Compares the code with the lock and exits with a [bitmask](#exit-codes). This is what CI runs |
 | `mintmap update <dir>` | After an intended change: refreshes the lock (changed entries become unreviewed again) |
-| `mintmap --version` | Prints the version (on `main`; not in the `v0.6.0a1` tag) |
+| `mintmap --version` | Prints the version (since 0.6.0a2) |
 
 **The review queue.** The text report of `scan` starts with a review queue (since 0.6.0a1): confirmed paths
 grouped by credential kind (`kind:session`, `kind:token`, `kind:precursor`, `kind:custom`, `kind:other`) and entry
@@ -233,10 +234,11 @@ Even so, 7 of 22 harmless changes raised a finding in the latest evaluation. The
 
 ## Accuracy
 
-MintMap 0.6.0a1 (frozen before the test) was measured on three open-source Django projects that nobody looked at
-while it was built: CVAT, Label Studio and Tandoor. The previous release, 0.5.0a1, was run on the same projects as a
-control. The reference inventories were written by separate AI agents (not humans) that never saw the tool's
-output, and every result was re-checked by an adversarial AI verifier that re-ran both versions:
+MintMap 0.6.0a1 (frozen before the test; 0.6.0a2 has the same catalog and gives the same scan results on these
+projects) was measured on three open-source Django projects that nobody looked at while it was built: CVAT, Label
+Studio and Tandoor. The previous release, 0.5.0a1, was run on the same projects as a control. The reference
+inventories were written by separate AI agents (not humans) that never saw the tool's output, and every result was
+re-checked by an adversarial AI verifier that re-ran both versions:
 
 | | 0.6.0a1 | 0.5.0a1 (control) |
 |---|---|---|
