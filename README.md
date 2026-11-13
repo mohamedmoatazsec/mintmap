@@ -139,6 +139,7 @@ Then point it at the Django project (the directory that contains `manage.py`) an
 
 ```bash
 mintmap scan   path/to/django/project            # the review queue, path evidence and the gaps
+mintmap scan   path/to/django/project --all-gaps # include every gap in the text report (default: first 40)
 mintmap init   path/to/django/project            # write mintmap.lock (all entries unreviewed)
 # review every group the scan lists, then record the decision: one --group at a time
 # (kind:session, kind:token, ..., settings), or all of them at once after the review:
@@ -149,7 +150,7 @@ git add path/to/django/project/mintmap.lock && git commit -m "Add reviewed MintM
 
 | Command | What it does |
 |---|---|
-| `mintmap scan <dir>` | Prints the review queue, the check evidence of each path it reports and the gaps. `--json out.json` writes the full report |
+| `mintmap scan <dir>` | Prints the review queue, the check evidence of each path it reports and the gaps (first 40 by default). `--all-gaps` lists every gap; `--json out.json` writes the full report |
 | `mintmap init <dir>` | Writes `mintmap.lock` with every entry unreviewed |
 | `mintmap accept <dir> ...` | Records a review: `--group <group>`, `--all`, or entry ids, with `--reviewer <name>` |
 | `mintmap diff <dir>` | Compares the code with the lock and exits with a [bitmask](#exit-codes). This is what CI runs |
