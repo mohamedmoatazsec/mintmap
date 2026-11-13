@@ -29,6 +29,9 @@ classifiers = [
 
 [project.urls]
 Homepage = "https://github.com/mohamedmoatazsec/mintmap"
+Documentation = "https://github.com/mohamedmoatazsec/mintmap/blob/main/docs/CONCEPTS.md"
+Evaluation = "https://github.com/mohamedmoatazsec/mintmap/blob/main/docs/EVALUATION.md"
+Changelog = "https://github.com/mohamedmoatazsec/mintmap/blob/main/CHANGELOG.md"
 Issues = "https://github.com/mohamedmoatazsec/mintmap/issues"
 
 [project.scripts]
