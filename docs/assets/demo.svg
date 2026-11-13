@@ -7,7 +7,7 @@
 <text x="456.0" y="22" text-anchor="middle" fill="#8b949e" font-size="13" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,Liberation Mono,monospace">bash scripts/demo.sh</text>
 <g font-size="13" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,Liberation Mono,monospace" xml:space="preserve">
 <text x="18" y="65" fill="#8b949e" textLength="782.0" lengthAdjust="spacingAndGlyphs">#&#160;1.&#160;What&#160;MintMap&#160;finds&#160;in&#160;the&#160;demo:&#160;3&#160;logins,&#160;1&#160;API&#160;token,&#160;the&#160;two-step&#160;sign-in&#160;marker,&#160;1&#160;candidate</text>
-<text x="18" y="84" fill="#79c0ff" font-weight="bold" textLength="610.0" lengthAdjust="spacingAndGlyphs">$&#160;mintmap&#160;scan&#160;examples/demo&#160;|&#160;grep&#160;-E&#160;'^&#160;+\[[0-9a-f]{16}\]&#160;(high|medium|low)'</text>
+<text x="18" y="84" fill="#79c0ff" font-weight="bold" textLength="539.6" lengthAdjust="spacingAndGlyphs">$&#160;mintmap&#160;scan&#160;examples/demo&#160;&#160;&#160;#&#160;abridged&#160;to&#160;the&#160;review-queue&#160;entries</text>
 <text x="18" y="103" fill="#c9d1d9" textLength="703.8" lengthAdjust="spacingAndGlyphs">&#160;&#160;&#160;&#160;&#160;&#160;[1686eb3b06d009ce]&#160;medium&#160;django.contrib.auth.login&#160;at&#160;members.views.finish_reset:68</text>
 <text x="18" y="122" fill="#c9d1d9" textLength="703.8" lengthAdjust="spacingAndGlyphs">&#160;&#160;&#160;&#160;&#160;&#160;[033339f757191ebb]&#160;medium&#160;django.contrib.auth.login&#160;at&#160;members.views.sign_in_code:52</text>
 <text x="18" y="141" fill="#c9d1d9" textLength="664.7" lengthAdjust="spacingAndGlyphs">&#160;&#160;&#160;&#160;&#160;&#160;[1b7d4559cbfd2737]&#160;medium&#160;django.contrib.auth.login&#160;at&#160;members.views.sign_in:37</text>

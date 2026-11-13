@@ -35,7 +35,7 @@ work="$(mktemp -d)" || exit 1
 trap 'rm -rf "$work"' EXIT
 
 say "1. What MintMap finds in the demo: 3 logins, 1 API token, the two-step sign-in marker, 1 candidate"
-show "mintmap scan examples/demo | grep -E '^ +\[[0-9a-f]{16}\] (high|medium|low)'"
+show "mintmap scan examples/demo   # abridged to the review-queue entries"
 mintmap scan examples/demo | grep -E '^ +\[[0-9a-f]{16}\] (high|medium|low)'
 
 say "2. The reviewed baseline (examples/demo/mintmap.lock) matches the code"
