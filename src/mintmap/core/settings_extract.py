@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import ast
 import copy
+import math
 import operator
 import re
 from dataclasses import dataclass, field
@@ -91,44 +92,72 @@ def _unparse(n) -> str:
 _NUMBER_BINOPS = {ast.Add: operator.add, ast.Sub: operator.sub, ast.Mult: operator.mul,
                   ast.Div: operator.truediv, ast.FloorDiv: operator.floordiv, ast.Mod: operator.mod,
                   ast.Pow: operator.pow}
-_MAX_POW_EXPONENT = 1000
+_MAX_POW_EXPONENT = 64                  # `**` only with an int exponent from 0 to 64
+_MAX_INT_MAGNITUDE = 2 ** 64            # any intermediate int at or above this stays dynamic
+
+
+def _bounded(v):
+    """(v8) `v` if it may be folded: an int below 2**64 in absolute value, or a finite float.  Otherwise None."""
+    if isinstance(v, int) and abs(v) >= _MAX_INT_MAGNITUDE:
+        return None
+    if isinstance(v, float) and not math.isfinite(v):
+        return None
+    return v
 
 
 def number_literal(e):
-    """(v7) The value of arithmetic on number literals alone (`60 * 60`, `-3600`, `2 ** 10`), or None.  Names, calls,
-    attributes and strings are never evaluated: `60 * 60` and `3600` then have the same value and fingerprint."""
+    """(v8) The value of arithmetic on number literals alone (`60 * 60`, `-3600`, `2 ** 10`), or None when it must
+    stay dynamic.  Names, calls, attributes and strings are never evaluated: `60 * 60` and `3600` then have the same
+    value and fingerprint.  Dynamic: an int or float literal of 2**64 or more, a non-finite float, a `**` whose
+    exponent is not an int from 0 to 64, any operation that raises (division by zero, overflow), and any intermediate
+    int of 2**64 or more in absolute value."""
     if isinstance(e, ast.Constant):
-        return e.value if type(e.value) in (int, float) else None      # bool, complex and str are not numbers here
+        return _bounded(e.value) if type(e.value) in (int, float) else None   # bool, complex and str are not numbers here
     if isinstance(e, ast.UnaryOp) and isinstance(e.op, (ast.UAdd, ast.USub)):
         v = number_literal(e.operand)
         if v is None:
             return None
-        return -v if isinstance(e.op, ast.USub) else v
+        return _bounded(-v if isinstance(e.op, ast.USub) else v)
     if isinstance(e, ast.BinOp) and type(e.op) in _NUMBER_BINOPS:
         a, b = number_literal(e.left), number_literal(e.right)
         if a is None or b is None:
             return None
-        if isinstance(e.op, ast.Pow) and (not isinstance(b, int) or abs(b) > _MAX_POW_EXPONENT):
-            return None                  # `10 ** 10 ** 10` must not be computed
+        if isinstance(e.op, ast.Pow) and (not isinstance(b, int) or not 0 <= b <= _MAX_POW_EXPONENT):
+            return None                  # `10 ** 10 ** 10` and `(10 ** 1000) ** 1000` must not be computed
         try:
-            return _NUMBER_BINOPS[type(e.op)](a, b)
+            return _bounded(_NUMBER_BINOPS[type(e.op)](a, b))
         except (ArithmeticError, ValueError):   # division by zero, overflow
             return None
     return None
 
 
+def _folded_node(v, original):
+    """(v8) The AST node for a folded value.  A negative value is written as a unary minus on its magnitude, the same
+    shape a source literal `-3600` parses to, so `-60 * 60` and `-3600` have the same dump."""
+    if isinstance(v, (int, float)) and (v < 0 or (isinstance(v, float) and math.copysign(1.0, v) < 0)):
+        node = ast.UnaryOp(op=ast.USub(), operand=ast.Constant(value=-v))
+    else:
+        node = ast.Constant(value=v)
+    return ast.copy_location(node, original)
+
+
 def fold_numbers(node):
-    """(v7) `node`, or a copy in which every arithmetic subtree on number literals is replaced by its value.  The copy
-    is made only when there is such a subtree, so a statement without one keeps its dump (and its lock entry)."""
-    if not any(isinstance(n, (ast.BinOp, ast.UnaryOp)) and number_literal(n) is not None for n in ast.walk(node)):
+    """(v8) `node`, or a copy in which every arithmetic subtree on number literals is replaced by its value.  A bare
+    negative literal (`-3600`) is kept as written, so its dump, and the lock entry of any group that only has such
+    literals, do not change.  The copy is made only when there is an arithmetic subtree to fold."""
+    if not any(isinstance(n, ast.BinOp) and number_literal(n) is not None for n in ast.walk(node)) and \
+            not any(isinstance(n, ast.UnaryOp) and not isinstance(n.operand, ast.Constant)
+                    and number_literal(n) is not None for n in ast.walk(node)):
         return node
 
     class _Fold(ast.NodeTransformer):
         def visit(self, n):
+            if isinstance(n, ast.UnaryOp) and isinstance(n.operand, ast.Constant):
+                return self.generic_visit(n)          # a bare literal such as `-3600`: keep its dump
             if isinstance(n, (ast.BinOp, ast.UnaryOp)):
                 v = number_literal(n)
                 if v is not None:
-                    return ast.copy_location(ast.Constant(value=v), n)
+                    return _folded_node(v, n)
             return self.generic_visit(n)
 
     return _Fold().visit(copy.deepcopy(node))

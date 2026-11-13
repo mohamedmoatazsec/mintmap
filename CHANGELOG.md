@@ -2,7 +2,8 @@
 
 ## Unreleased
 
-No change to the analysis, the catalog, fingerprints or the lock format.
+No change to the analysis, the catalog or the lock format. Settings fingerprints change only for groups
+with arithmetic on number literals (see the upgrade note below).
 
 - `action.yml`: the description no longer contains an apostrophe, which the GitHub Marketplace page dropped
   ("MintMap s own coverage"). It now ends "or what MintMap can analyse changes."
@@ -70,14 +71,20 @@ Changed:
 
 - The tagline, the package description and the docs no longer say that MintMap finds "every" path: they say it
   looks for the paths that create a session or credential, as the published miss rates require.
-- Arithmetic on number literals in a settings value (`PASSWORD_RESET_TIMEOUT = 60 * 60`, `-3600`) is folded to its
-  value before the settings group is fingerprinted. Rewriting it as its value (`3600`), or as another expression with
-  the same value, no longer reports `fingerprint_changed`; a different number still does. Only literal arithmetic is
-  folded: names, calls, attributes and strings are not evaluated.
-- Upgrade note: a settings group that contains such an expression, or a negative number literal, reports
-  `fingerprint_changed` once after upgrading, because its fingerprint text changes. Run `mintmap update` and accept
-  the entry again.
-
+- Arithmetic on number literals in a settings value is folded to its value before the settings group is
+  fingerprinted: `+ - * / // %`, unary minus, parentheses, and `**` with an int exponent from 0 to 64. Rewriting
+  `PASSWORD_RESET_TIMEOUT = 60 * 60` as `3600`, or as another expression with the same value, no longer reports
+  `fingerprint_changed`; a different number still does. Names, calls, attributes and strings are never evaluated.
+- Stays dynamic (the `<dynamic ...>` text, as before): any intermediate int of 2**64 or more in absolute value,
+  any non-finite float (`inf`, `nan`), a division by zero or an overflow, and a `**` whose exponent is not an int
+  from 0 to 64 (so `10 ** 10 ** 10` and nested powers are not computed, and the scan finishes at once).
+- A bare negative literal such as `-3600` keeps its current fingerprint text. A folded negative value is written in
+  the same form, so `-60 * 60` and `-3600` have the same fingerprint.
+- Upgrade note: a settings group that contains arithmetic on literals (for example `PASSWORD_RESET_TIMEOUT = 60 * 60`)
+  reports `fingerprint_changed` once after upgrading, because its fingerprint text changes from the expression to
+  its value. Run `mintmap update` and accept the entry again. Groups with only plain or negative literals do not
+  change. Scan path ids and path fingerprints are unchanged (checked on the demo against upstream `main`).
+- The demo lock and the README image were refreshed with Python 3.13.
 ## 0.6.0a1 (experimental)
 
 First public release.
