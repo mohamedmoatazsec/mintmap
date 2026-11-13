@@ -15,7 +15,7 @@ numbers come from an automatic regression harness and were not re-checked by a v
 | 3 | v5 frozen (released as 0.5.0a1) | InvenTree, Weblate, pretix | held-out, then used to develop v6 |
 | 4 | **v6 frozen (released as 0.6.0a1)**, with v5 as a control | **CVAT, Label Studio, Tandoor** | **held-out** |
 
-Release 0.6.0a1 is the frozen v6 tree (commit `33499c3`) plus documentation and the version string. No analysis
+Release 0.6.0a1 is the frozen v6 tree (tag `v0.6.0.dev0-frozen`, commit `fed05c8`) plus documentation and the version string. No analysis
 code changed after freezing.
 
 ## Method

@@ -212,7 +212,7 @@ accepts one group. Lock format: path entries gain the informational `review` blo
 written by 0.5.0a1 / v6a stay valid (for them `accept --group` derives the group from the purpose) and
 `mintmap update` adds the block.
 
-**Before / after** (regression harness `v5r` -> `v6a` -> `v6b` = this tree, snapshot 553190a, 1270.9 s). Lock
+**Before / after** (regression harness `v5r` -> `v6a` -> `v6b` = this tree, snapshot 9fc19d2, 1270.9 s). Lock
 entries = path entries + settings entries + candidate groups (candidate sites). FA = adjudicated false alarms still
 reported (any tier) / reported items nobody adjudicated; precision = share of reported items (paths + candidate
 sites) that are not adjudicated false alarms, as a range (unadjudicated items counted as false alarms ... as real).
