@@ -15,13 +15,14 @@ Measuring a Django auth-path static analyzer on unseen codebases: 12% of credent
 ## Option B: a comment in the pinned "monthly discussion & tool thread"
 
 ```
-MintMap (open source, Apache-2.0, experimental): static analysis for Django that inventories every code path
-that creates a session or credential, stores a reviewed baseline, and fails CI when the set or the code on it
+MintMap (open source, Apache-2.0, experimental): static analysis for Django that inventories the code paths it
+finds that create a session or credential, stores a reviewed baseline, and fails CI when the set or the code on it
 changes. Parses with ast, never imports the project.
 
 I measured it frozen on three codebases it had not seen: 8 of 66 credential paths missed with no warning, 25 of
 58 reported paths false alarms, 42 of 65 harmful mutations caught by the CI diff. The inventories used as ground
-truth were written by AI agents, not people. Methodology and failure analysis are in docs/EVALUATION.md.
+truth were written by AI agents, not people, and the adversarial verifier was an AI agent too. Methodology and
+failure analysis are in docs/EVALUATION.md.
 
 https://github.com/mohamedmoatazsec/mintmap
 ```

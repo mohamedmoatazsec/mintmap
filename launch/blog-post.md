@@ -1,19 +1,20 @@
 # We measured how often our auth-path scanner misses things
 
-MintMap is a static-analysis tool for Django. It finds every code path that creates a login session or a
-credential, writes the set to a lock file that a person reviews, and fails CI when a pull request changes that
-set or the code on it. Whether that works is an empirical question, so we froze the tool and ran it on code
+MintMap is a static-analysis tool for Django. It looks for the code paths that create a login session or a
+credential, writes what it finds to a lock file that a person reviews, and fails CI when a pull request changes
+that set or the code on it. Whether that works is an empirical question, so we froze the tool and ran it on code
 it had never seen. This post is about what came back.
 
 ## The set-up
 
-MintMap was developed in four rounds on eleven open-source Django projects. In every round after the first, the
-tool was frozen first and then measured on projects nobody had looked at while building that version. Those
-projects then became development data for the next version.
+MintMap was developed and measured on eleven open-source Django projects in four rounds. In every round after the
+first, the tool was frozen first and then measured on projects nobody had looked at while building that version.
+The projects of rounds 2 and 3 then became development data for the next version; those of round 4 (CVAT, Label
+Studio, Tandoor) are still held out.
 
 For each project, a separate AI agent read the code and wrote an inventory of every way to obtain a session or
-credential, without ever seeing the tool or its output. An adversarial verifier then re-ran the tool and tried
-to refute the scoring.
+credential, without ever seeing the tool or its output. An adversarial verifier, also an AI agent and not a
+person, then re-ran the tool and tried to refute the scoring.
 
 We also wanted to know whether MintMap notices harmful changes. So we copied each project, accepted a lock,
 applied one realistic change (a new login path, an MFA result that is ignored, a verifier that accepts
@@ -43,7 +44,8 @@ such as reset and invitation tokens (4 of 12) were.
 This is the result that changed how we work.
 
 On the eight projects the tool was developed against, the newest version cut silent misses from 51 of 213 to 4
-of 213, and caught 98 of 98 harmful changes, up from 80. Those numbers looked like a solved problem.
+of 213, and caught 98 of 98 harmful changes, up from 80. (These development-set numbers come from an automatic
+regression harness; no verifier re-checked them.) Those numbers looked like a solved problem.
 
 On the three unseen projects, the same version improved on its predecessor by 3 paths (11 silent misses down to
 8) and 6 harmful changes (36 caught up to 42).
@@ -78,7 +80,7 @@ sample.
 
 ## What we concluded
 
-MintMap is a review aid, not a guarantee, and the README says so before anything else. On an unfamiliar
+MintMap is a review aid, not a guarantee, and the README says so right under its title. On an unfamiliar
 codebase, expect it to miss some tokens and precursors, to show you many false alarms on day one, and to let
 about a third of harmful changes to auth code through.
 
