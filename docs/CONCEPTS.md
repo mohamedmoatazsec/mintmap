@@ -3,12 +3,18 @@
 The words MintMap uses in its reports, its lock file and its findings. Every example on this page is real output
 from the demo project in [`examples/demo`](../examples/demo); run `mintmap scan examples/demo` to see the rest.
 
+**In the demo**, four routes sign someone in, and `mintmap scan` reports five paths and one candidate: the four
+logins and tokens, the pending-member value that `sign_in` writes to the session before the TOTP step (a
+hand-written session value, found by a heuristic), and, as a candidate, the `set_password` call in `finish_reset`
+(a password set from a value the code does not generate).
+
 | Word | In one line |
 |---|---|
 | [Mint site](#mint-sites) | A call that creates a session or credential |
 | [Entry point](#entry-points) | Where a request (or other trigger) comes in: a route, middleware, an admin registration |
 | [Path](#paths) | One entry point reaching one mint site, with the checks seen on the way |
 | [Check evidence](#check-evidence) | What MintMap could see about the checks on a path |
+| [Factor](#check-evidence) | What a check verifies: `password`, `otp`, `reset_token_possession`, ... |
 | [Candidate](#candidates) | A lower-confidence site that has a structural reason to be reviewed |
 | [Watched site](#watched-sites) | A site a rule decided is *not* a credential, kept under watch in case the rule is wrong |
 | [Gap](#gaps) | Something MintMap could not analyse, listed explicitly |
@@ -44,9 +50,9 @@ grouped into five **credential kinds**:
 
 ## Entry points
 
-MintMap traces every mint site back to where it can be triggered: URL routes (including `include()`, DRF routers,
-helper functions and i18n patterns), middleware, admin registrations and library views. An entry point has an id
-such as:
+MintMap traces each mint site it finds back to the places it can see that trigger it: URL routes (including
+`include()`, DRF routers, helper functions and i18n patterns), middleware, admin registrations and library views.
+An entry point has an id such as:
 
 ```
 route:members/sign-in/code/|members.views.sign_in_code
@@ -72,8 +78,9 @@ A mint site shared by many entry points becomes one lock entry that lists them; 
 ## Check evidence
 
 On the way from the entry point to the mint site, MintMap records the checks it can see: password, TOTP, WebAuthn,
-token signature, permission gates. For each check it makes a best-effort judgement of whether the result decides
-the outcome:
+token signature, permission gates. Each check is labelled with the authentication **factor** it verifies, for
+example `password`, `otp` or `reset_token_possession`; a path's `factors` maps each factor to its relation. For
+each check MintMap makes a best-effort judgement of whether the result decides the outcome:
 
 | Relation | Meaning |
 |---|---|
@@ -151,8 +158,8 @@ gaps by type: {}
 that adds a gap or a parse failure, loses a parsed file or changes the analysed roots raises `coverage_regression`, so MintMap cannot
 quietly start seeing less.
 
-> **Not everything MintMap misses is a gap.** On projects it was not developed against, 12% to 30% of credential
-> paths were missed with no gap at all, depending on the project set. See
+> **Not everything MintMap misses is a gap.** On projects it was not developed against, 0.6.0a1 missed 12% of
+> credential paths with no gap at all (0.5.0a1 missed 30% on an earlier, harder project set). See
 > [Known blind spots](../README.md#known-blind-spots) and [EVALUATION.md](EVALUATION.md).
 
 The report also lists library flows that the project's settings switch off. They are not paths, but switching one
@@ -168,8 +175,9 @@ entries, one per group:
 ```
 
 A group that is new, removed or changed sets `fingerprint_changed` once, and the finding names the settings that
-changed. MintMap follows the `DJANGO_SETTINGS_MODULE` named in `manage.py`; there is no option to choose another
-settings module.
+changed. MintMap analyses the settings modules that `DJANGO_SETTINGS_MODULE` literals in the code name and, as
+alternatives, every other leaf settings module except test settings. There is no option to choose one settings
+module.
 
 ## The review queue
 
@@ -228,8 +236,10 @@ these versions can be checked with another. With any other version, write the lo
 CI uses.
 
 **What does not change a fingerprint:** formatting, comments, docstrings and renamed local variables. Simple
-extractions of a helper function in the same module are normalised too. Since 0.6.0a1 the following are
-normalised as well:
+extractions of a helper function in the same module are normalised too, except a helper whose name looks like a
+check (for example `check_*`, `verify*`, `validate*`, `confirm_*`, after leading underscores) and a helper that
+returns the result of a recognised check ([#9](https://github.com/mohamedmoatazsec/mintmap/issues/9)). Since 0.6.0a1
+the following are normalised as well:
 
 - extracting a method of the same class that no subclass overrides;
 - helpers called with attribute arguments such as `request.META`, unless a call in the helper could rebind the

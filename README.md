@@ -1,6 +1,6 @@
 # MintMap
 
-**A reviewed map of every code path that creates a login session or credential in a Django app, enforced in CI.**
+**A reviewed map of the code paths that create a login session or credential in a Django app, enforced in CI.**
 
 [![tests](https://github.com/mohamedmoatazsec/mintmap/actions/workflows/tests.yml/badge.svg?branch=main)](https://github.com/mohamedmoatazsec/mintmap/actions/workflows/tests.yml)
 [![license: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
@@ -8,22 +8,26 @@
 [![status: experimental](https://img.shields.io/badge/status-experimental-orange)](#accuracy)
 [![release](https://img.shields.io/github/v/release/mohamedmoatazsec/mintmap?include_prereleases&label=release)](https://github.com/mohamedmoatazsec/mintmap/releases)
 
-In a Django app the ways to get logged in are scattered across views, middleware, libraries and settings, and any
-pull request can add one or weaken one without the reviewer noticing that it touched authentication. MintMap reads
-the code, finds every path that creates a session or credential, stores that set in a human-reviewed
-`mintmap.lock`, and fails CI when the set, or the code and checks on it, change. What makes it different is the
-combination: a reviewed baseline plus a CI diff, an explicit list of what it could not analyse, and a published
-miss rate measured on projects it had never seen.
+> **Status: experimental (0.6.0a1).** MintMap was built on eight open-source Django projects, then frozen and
+> tested on three it had never seen (CVAT, Label Studio, Tandoor). There it linked 28 of 66 credential paths to the
+> right route, pointed to 30 more only indirectly (an unlinked mint, a candidate or a named gap) and missed 8 (12%)
+> with no warning. 43% of the paths it reported were false alarms, and `diff` let 23 of 65 harmful test changes
+> through. (The previous release, 0.5.0a1, missed 30% with no warning on an earlier, harder set of unseen projects.)
+> It is a review aid, not a guarantee. Read [Accuracy](#accuracy) first.
+
+In a Django app the ways to get logged in are scattered: the login view, auto-login after sign-up or password
+reset, SSO callbacks, magic links, two-factor steps, API tokens, admin impersonation. Any pull request can add one
+or weaken one without the reviewer noticing that it touched authentication; a classic bug is a two-factor check
+that still runs but whose result is ignored. MintMap parses the code (it never runs it), looks for the paths that
+create a session or credential, stores the ones it finds in a human-reviewed `mintmap.lock`, and fails CI when that
+set, or the code and checks on it, change. What makes it different is the combination: a reviewed baseline plus a
+CI diff, an explicit list of what it could not analyse, and a published miss rate measured on projects it had
+never seen.
 
 <p align="center">
   <img src="docs/assets/demo.svg" width="900"
        alt="Terminal output of scripts/demo.sh. A pull request makes a TOTP check ignore its result, and mintmap diff exits 12 with the findings FINGERPRINT_CHANGED and EVIDENCE_DOWNGRADED.">
 </p>
-
-> **Status: experimental (0.6.0a1).** MintMap was built on eight open-source Django projects and then frozen and
-> tested on three it had never seen (CVAT, Label Studio, Tandoor). There it missed 12% of credential paths with no
-> warning (an earlier set of unseen projects: 30%). 43% of the paths it reported were false alarms, and `diff` let
-> 23 of 65 harmful test changes through. It is a review aid, not a guarantee. Read [Accuracy](#accuracy) first.
 
 **Contents:** [Try it in 60 seconds](#try-it-in-60-seconds) · [How it works](#how-it-works) ·
 [Use it on your project](#use-it-on-your-project) · [GitHub Action](#github-action) · [Exit codes](#exit-codes) ·
@@ -85,8 +89,8 @@ flowchart LR
 4. **Writes `mintmap.lock`**, which a security reviewer approves once.
 5. **Fails CI** when a pull request adds or removes a path, changes the code or checks on a reviewed path,
    weakens a check, or reduces what MintMap can analyse. Many constructs it cannot analyse are listed as
-   **gaps**, but not all: on projects it was not developed against, 12% to 30% of credential paths were missed
-   with no gap at all, depending on the project set (see [Accuracy](#accuracy)).
+   **gaps**, but not all: on projects it was not developed against, 0.6.0a1 missed 12% of credential paths with no
+   gap at all (0.5.0a1 missed 30% on an earlier, harder project set; see [Accuracy](#accuracy)).
 
 Since 0.6.0a1 MintMap also reports two lower-confidence tiers, both fingerprinted and diffed like paths:
 
@@ -126,7 +130,7 @@ git add path/to/django/project/mintmap.lock && git commit -m "Add reviewed MintM
 
 | Command | What it does |
 |---|---|
-| `mintmap scan <dir>` | Prints the review queue, the check evidence of every path and the gaps. `--json out.json` writes the full report |
+| `mintmap scan <dir>` | Prints the review queue, the check evidence of each path it reports and the gaps. `--json out.json` writes the full report |
 | `mintmap init <dir>` | Writes `mintmap.lock` with every entry unreviewed |
 | `mintmap accept <dir> ...` | Records a review: `--group <group>`, `--all`, or entry ids, with `--reviewer <name>` |
 | `mintmap diff <dir>` | Compares the code with the lock and exits with a [bitmask](#exit-codes). This is what CI runs |
@@ -250,17 +254,22 @@ General causes of the misses found in the latest evaluation (0.6.0a1 on CVAT, La
 - Credentials created or edited through the Django admin for project models (`ModelAdmin` saves, admin actions, a
   token field in an admin form). Admin registrations are linked only when the model's `save()` is a known mint.
 - A settings module that star-imports its base module through a source-root alias: the base module's
-  `INSTALLED_APPS`, `MIDDLEWARE`, `AUTHENTICATION_BACKENDS` and `REST_FRAMEWORK` are not read (one generic gap).
+  `INSTALLED_APPS`, `MIDDLEWARE`, `AUTHENTICATION_BACKENDS` and `REST_FRAMEWORK` are not read, and the scan reports
+  only the unresolved import (`settings_star_import_unresolved`) and `missing_setting` gaps, not which settings the
+  unread base module holds.
 - Hooks named in settings and loaded by a project helper (`load_func(settings.X)`), and adapter classes re-exported
   from a package `__init__`: such code is in no fingerprint, so weakening it can pass `diff`.
 - DRF routers extended at run time (one global gap), tokens created by `ModelSerializer.create()` through `super()`,
   and credentials written from request data by an update serializer.
 - Values whose field name has no credential word (`InviteLink.uuid`) and session writes without a principal-like
   signal are set aside in the JSON report only, not watched.
-- Libraries outside the catalog (for example django-auth-ldap) and project code that only such a library calls.
+- Libraries outside the catalog (for example django-auth-ldap) and project code that only such a library calls;
+  their settings (for example `AUTH_LDAP_GLOBAL_OPTIONS`) are in no fingerprint, so weakening them passes `diff` (2
+  of the 23 harmful test changes that passed in the latest evaluation).
 - Not modelled: session lifetime and token revocation checks, project view decorators, admin actions as entry
-  points, signed cookies (`set_signed_cookie`) as credentials, multi-request flows. There is no option to choose the
-  settings module: MintMap follows `DJANGO_SETTINGS_MODULE` in `manage.py`.
+  points, signed cookies (`set_signed_cookie`) as credentials, multi-request flows. There is no option to choose one
+  settings module: MintMap analyses the modules that `DJANGO_SETTINGS_MODULE` literals in the code name and, as
+  alternatives, every other leaf settings module except test settings.
 - Django only. Library knowledge covers Django auth, DRF, SimpleJWT, knox, djoser, dj-rest-auth, django-allauth,
   social-auth, django-otp, two-factor-auth, sesame, oauth-toolkit and a few more (about 15 packages). Other
   libraries usually show up as gaps, but not always.
@@ -317,8 +326,8 @@ django-allauth 65 and the others listed in
 older or newer releases have not been measured.
 
 **How long does a scan take?**
-Seconds. Measured on 2026-11-13 with Python 3.13 on a 2-vCPU Linux machine (Intel Xeon, 2.3 GHz), three runs
-each, on the then-current default branch of each project:
+Seconds, for projects of these sizes. Measured on 2026-11-13 with Python 3.13 on a 2-vCPU Linux machine (Intel
+Xeon, 2.3 GHz), three runs each, on the then-current default branch of each project:
 
 | Project | Python files parsed | `mintmap scan` wall time |
 |---|---|---|
@@ -327,8 +336,9 @@ each, on the then-current default branch of each project:
 | Tandoor (`82a1ad8a`) | 343 | 2.6 to 2.8 s |
 | CVAT (`873008de`) | 534 | 7.2 to 7.5 s |
 
-Peak memory over all of these scans was about 170 MB. `diff` runs the same analysis and then compares it with the
-lock.
+Peak memory over all of these scans was about 170 MB. A much larger codebase takes longer: Zulip (1,769 Python
+files, one of the development projects) took about 37 s with a peak of about 400 MB, measured with Python 3.13 on a
+4-vCPU Intel Xeon at 2.1 GHz. `diff` runs the same analysis and then compares it with the lock.
 
 **Does it replace code review of authentication changes?**
 No. It points the review at the right pull requests. It misses things (see [Accuracy](#accuracy)), and the
