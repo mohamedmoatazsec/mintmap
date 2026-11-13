@@ -1,5 +1,5 @@
 # Copy to .github/workflows/mintmap.yml in your Django repository.
-# Before the first run: install MintMap (`pip install "git+https://github.com/OWNER/mintmap"`, replacing OWNER;
+# Before the first run: install MintMap (`pip install "git+https://github.com/mohamedmoatazsec/mintmap@v0.6.0a1"`;
 # PyPI release pending), run `mintmap init <project_dir>`, review the entries, record the review with
 # `mintmap accept <project_dir> --all --reviewer <you>`, and commit mintmap.lock.
 # Write the lock with Python 3.11, 3.12 or 3.13 (fingerprints are the same on these), or with the version set in
@@ -18,6 +18,6 @@ jobs:
           persist-credentials: false
       # Keep this job free of code from the pull request: do not install the project's dependencies or run its
       # tests here before MintMap (see docs/ENFORCEMENT.md, section 4). MintMap needs neither.
-      - uses: OWNER/mintmap@<full-commit-sha>   # replace OWNER and pin to a full commit SHA of a MintMap release
+      - uses: mohamedmoatazsec/mintmap@<full-commit-sha>   # pin to the full commit SHA of a MintMap release tag
         with:
           project-dir: .

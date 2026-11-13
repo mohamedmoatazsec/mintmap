@@ -27,6 +27,10 @@ classifiers = [
     "Topic :: Software Development :: Quality Assurance",
 ]
 
+[project.urls]
+Homepage = "https://github.com/mohamedmoatazsec/mintmap"
+Issues = "https://github.com/mohamedmoatazsec/mintmap/issues"
+
 [project.scripts]
 mintmap = "mintmap.cli:entry"
 

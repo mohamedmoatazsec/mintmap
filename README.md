@@ -69,7 +69,7 @@ version CI uses.
 ## Quick start
 
 ```bash
-pip install "git+https://github.com/OWNER/mintmap"      # replace OWNER; PyPI release pending
+pip install "git+https://github.com/mohamedmoatazsec/mintmap@v0.6.0a1"   # PyPI release pending
 
 mintmap scan  path/to/django/project                    # the review queue, path evidence and the gaps
 mintmap init  path/to/django/project                    # write mintmap.lock (all entries unreviewed)
@@ -108,7 +108,7 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           persist-credentials: false
-      - uses: OWNER/mintmap@<full-commit-sha>   # replace OWNER; pin to a full commit SHA of a release
+      - uses: mohamedmoatazsec/mintmap@<full-commit-sha>   # pin to the full commit SHA of a release tag
         with:
           project-dir: .
 ```
