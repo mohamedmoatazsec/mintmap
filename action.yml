@@ -1,5 +1,5 @@
 name: MintMap for Django
-description: Fail a pull request when a reviewed Django login/credential path, its code or checks, or MintMap's own coverage changes.
+description: Fail a pull request when a reviewed Django login/credential path, its code or checks, or what MintMap can analyse changes.
 branding:
   icon: lock
   color: gray-dark
