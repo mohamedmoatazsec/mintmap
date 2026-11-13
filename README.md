@@ -1,55 +1,118 @@
 # MintMap
 
-**A reviewed map of every code path that creates a login session or credential in a Django app, enforced in CI.**
+**A reviewed map of the code paths that create a login session or credential in a Django app, enforced in CI.**
 
-> **Status: experimental (0.6.0a1).** MintMap was built on eight open-source Django projects and then frozen and
-> tested on three it had never seen (CVAT, Label Studio, Tandoor). There it missed 12% of credential paths with no
-> warning (an earlier set of unseen projects: 30%). 43% of the paths it reported were false alarms, and `diff` let
-> 23 of 65 harmful test changes through. It is a review aid, not a guarantee. Read [Accuracy](#accuracy) first.
+[![tests](https://github.com/mohamedmoatazsec/mintmap/actions/workflows/tests.yml/badge.svg?branch=main)](https://github.com/mohamedmoatazsec/mintmap/actions/workflows/tests.yml)
+[![license: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
+[![python: 3.11 | 3.12 | 3.13 | 3.14](https://img.shields.io/badge/python-3.11%20%7C%203.12%20%7C%203.13%20%7C%203.14-blue)](pyproject.toml)
+[![status: experimental](https://img.shields.io/badge/status-experimental-orange)](#accuracy)
+[![release](https://img.shields.io/github/v/release/mohamedmoatazsec/mintmap?include_prereleases&label=release)](https://github.com/mohamedmoatazsec/mintmap/releases)
 
-## The problem
+> **Status: experimental (0.6.0a2; the analysis and catalog are those evaluated as 0.6.0a1).** MintMap was built
+> on eight open-source Django projects, then frozen and tested on three it had never seen (CVAT, Label Studio,
+> Tandoor). There it linked 28 of 66 credential paths to the right route, pointed to 30 more only indirectly (an
+> unlinked mint, a candidate or a named gap) and missed 8 (12%) with no warning. 43% of the paths it reported were
+> false alarms, and `diff` let 23 of 65 harmful test changes through. (The previous release, 0.5.0a1, missed 30%
+> with no warning on an earlier, harder set of unseen projects.) It is a review aid, not a guarantee. Read
+> [Accuracy](#accuracy) first.
 
-In a real Django app, "ways to get logged in" are scattered: the login view, auto-login after sign-up or password
-reset, SSO callbacks, magic links, two-factor steps, API tokens, admin impersonation, remote-user middleware.
-Any pull request can add one or weaken one, and most reviewers will not notice that a change touched
-authentication. A classic bug: the two-factor check still runs, but its result is ignored.
+In a Django app the ways to get logged in are scattered: the login view, auto-login after sign-up or password
+reset, SSO callbacks, magic links, two-factor steps, API tokens, admin impersonation. Any pull request can add one
+or weaken one without the reviewer noticing that it touched authentication; a classic bug is a two-factor check
+that still runs but whose result is ignored. MintMap parses the code (it never runs it), looks for the paths that
+create a session or credential, stores the ones it finds in a human-reviewed `mintmap.lock`, and fails CI when that
+set, or the code and checks on it, change. What makes it different is the combination: a reviewed baseline plus a
+CI diff, an explicit list of what it could not analyse, and a published miss rate measured on projects it had
+never seen.
 
-Security teams rarely have an up-to-date list of these paths, and code scanners look for known bug patterns rather
-than telling you *that the set of ways in has changed*.
+<p align="center">
+  <img src="docs/assets/demo.svg" width="900"
+       alt="Terminal output of scripts/demo.sh. A pull request makes a TOTP check ignore its result, and mintmap diff exits 12 with the findings FINGERPRINT_CHANGED and EVIDENCE_DOWNGRADED.">
+</p>
 
-## What MintMap does
+**Contents:** [Try it in 60 seconds](#try-it-in-60-seconds) · [How it works](#how-it-works) ·
+[Use it on your project](#use-it-on-your-project) · [GitHub Action](#github-action) · [Exit codes](#exit-codes) ·
+[Accuracy](#accuracy) · [Known blind spots](#known-blind-spots) ·
+[Semgrep or CodeQL?](#how-is-this-different-from-semgrep-or-codeql) · [FAQ](#faq) ·
+[Contributing](#contributing)
+
+## Try it in 60 seconds
+
+You need Python 3.11 or newer and git. Check `python3 --version`: the `python3` of macOS's command-line tools
+(3.9) and of Ubuntu 22.04 (3.10) are too old; with a newer one installed, run
+`PYTHON=python3.12 bash scripts/demo.sh`. Nothing is installed, and Django is not needed: MintMap only parses code.
+
+```bash
+git clone https://github.com/mohamedmoatazsec/mintmap
+cd mintmap
+bash scripts/demo.sh
+```
+
+The script scans the small Django project in [`examples/demo`](examples/demo), applies a bad pull request
+([`bad-pr.patch`](examples/demo/bad-pr.patch)) to a temporary copy and shows `mintmap diff` failing. The image
+above is its output, and CI re-checks both on every push.
+
+On Windows, run the script in Git Bash or WSL, or follow the steps by hand below in PowerShell. `mintmap diff`
+prints its exit code on its last line; in PowerShell use `echo $LASTEXITCODE` where the steps say `echo $?`.
+
+<details>
+<summary>The same steps by hand</summary>
+
+```bash
+python3 -m venv .venv && . .venv/bin/activate   # Windows: .venv\Scripts\activate
+python -m pip install .                 # or skip both lines and use: python3 -I scripts/run_mintmap.py <arguments>
+
+mintmap scan examples/demo              # the review queue, the check evidence and the gaps
+mintmap diff examples/demo; echo $?     # 0: the code matches the reviewed lock
+
+git apply --directory=examples/demo examples/demo/bad-pr.patch
+mintmap diff examples/demo; echo $?     # 12: fingerprint_changed + evidence_downgraded
+
+git apply -R --directory=examples/demo examples/demo/bad-pr.patch    # undo
+```
+
+</details>
+
+## How it works
+
+```mermaid
+flowchart LR
+    scan["mintmap scan"] --> queue["Review queue<br/>paths, candidates,<br/>settings, gaps"]
+    queue -- "a person reviews<br/>and accepts" --> lock[("mintmap.lock<br/>committed")]
+    lock --> pr["Pull request"]
+    pr --> diff["mintmap diff"]
+    diff -- "exit 0" --> pass["CI passes"]
+    diff -- "exit > 0" --> fail["CI fails"]
+    fail -- "intended change:<br/>update, review, accept" --> lock
+```
 
 1. **Finds mint sites**: calls that create a session or credential (`django.contrib.auth.login`, DRF and JWT
    tokens, django-allauth flows, OAuth2 provider tokens, project-made tokens built from `secrets`/`uuid4`, ...).
 2. **Traces them to entry points**: URL routes (including `include()`, routers, helper functions, i18n
    patterns), middleware, admin registrations and library views.
-   *Since 0.6.0a1* it also lists lower-confidence **candidates**:
-   hand-written session state (logins, MFA / step-up / impersonation state, session hand-offs, any session write
-   right after a password or PIN re-check), passwords set from a value the code does not generate, calls into an
-   authentication library the catalog does not describe (also packages the catalog does not cover at all, when the
-   function's name says it logs in or issues a token and it receives the request or a user), unregistered
-   subclasses of minting middleware or views, project code that authenticates requests itself (DRF authentication
-   classes, another framework's `authenticate(self, request, ...)`, every `request.user = ...` /
-   `scope["user"] = ...` that is not an anonymous user, ranked high when no credential check is visible), and mint
-   sites that only start-up, deploy or command-line code reaches (`AppConfig.ready()`, settings, management
-   commands, data migrations).  Candidates are traced, fingerprinted and diffed like paths, but reviewed as one
-   lock entry per kind (`candidates:<kind>`) whose sites are ranked and carry the reason they were reported.
-   *Also new:* sites that a precision rule **set aside** as not being credentials (random values kept under a
-   name without a credential word, signed values no reader uses to log anyone in, session ids that load a
-   non-principal object, generators nothing references) are **watched**: one low-ranked lock entry per rule
-   (`watched:<kind>`), fingerprinted by the site's own code and the entry points reaching it, so a wrong
-   judgement on unfamiliar code still shows up in `diff`.  Values set aside because their name says they are an
-   identifier, a file, a cache key and so on are only listed in the JSON report.
 3. **Records the checks it can see on the way**: password, TOTP, WebAuthn, token signature, permission gates, and
    a best-effort judgement of whether each check's result decides the outcome. This evidence is often weaker than
    the truth and sometimes wrong (see [Accuracy](#accuracy)).
 4. **Writes `mintmap.lock`**, which a security reviewer approves once.
 5. **Fails CI** when a pull request adds or removes a path, changes the code or checks on a reviewed path,
    weakens a check, or reduces what MintMap can analyse. Many constructs it cannot analyse are listed as
-   **gaps**, but not all: on projects it was not developed against, 12% to 30% of credential paths were missed
-   with no gap at all, depending on the project set (see [Accuracy](#accuracy)).
+   **gaps**, but not all: on projects it was not developed against, 0.6.0a1 missed 12% of credential paths with no
+   gap at all (0.5.0a1 missed 30% on an earlier, harder project set; see [Accuracy](#accuracy)).
 
-Real output, after a one-line change that makes the Healthchecks TOTP form accept every code:
+Since 0.6.0a1 MintMap also reports two lower-confidence tiers, both fingerprinted and diffed like paths:
+
+| Tier | What it is | Lock entry |
+|---|---|---|
+| **Candidates** | Sites with a structural reason to be reviewed: hand-written session state, passwords set from a value the code does not generate, calls into authentication libraries the catalog does not describe, project code that authenticates requests itself, and more | one per kind, `candidates:<kind>` |
+| **Watched sites** | Sites a precision rule set aside as *not* being credentials, kept under watch so that a wrong judgement on unfamiliar code still shows up in `diff` | one per rule, `watched:<kind>` |
+
+The full explanation of paths, candidates, watched sites, gaps, settings groups, the review queue and the lock is
+in **[docs/CONCEPTS.md](docs/CONCEPTS.md)**.
+
+<details>
+<summary>Real output on a real project (Healthchecks)</summary>
+
+After a one-line change that makes the Healthchecks TOTP form accept every code:
 
 ```
 $ mintmap diff .
@@ -58,41 +121,52 @@ EVIDENCE_DOWNGRADED    e06b237f9895851e  factor otp: guards_mint -> present_unpr
 exit 12 (fingerprint_changed, evidence_downgraded)
 ```
 
-MintMap reads source code with Python's `ast` module. It **never imports or runs** the project or its libraries,
-needs no database or settings, and has no dependencies beyond the Python standard library (3.11+). It must run on
-a Python that can parse the project's code: a project that uses Python 3.12 syntax (for example the same quotes
-nested inside an f-string) needs MintMap on 3.12 or newer, otherwise those files are reported as parse failures.
-Lock fingerprints are the same on Python 3.11, 3.12 and 3.13 (tested on eight projects), so a lock written with one
-of these versions can be checked with another; with any other version, write the lock with the Python minor
-version CI uses.
+</details>
 
-## Quick start
+## Use it on your project
+
+Install MintMap in a virtualenv or with pipx (the system Python of current Debian, Ubuntu and Homebrew refuses
+`pip install` outside one, PEP 668). It needs Python 3.11 or newer and nothing else.
 
 ```bash
-pip install "git+https://github.com/mohamedmoatazsec/mintmap@v0.6.0a1"   # PyPI release pending
+python3 -m venv .venv && . .venv/bin/activate     # Windows: .venv\Scripts\activate
+python -m pip install mintmap                     # or: pipx install mintmap
+# or from the release tag: python -m pip install "git+https://github.com/mohamedmoatazsec/mintmap@v0.6.0a2"
+```
 
-mintmap scan  path/to/django/project                    # the review queue, path evidence and the gaps
-mintmap init  path/to/django/project                    # write mintmap.lock (all entries unreviewed)
-# review the entries, then record the decision (one group at a time, or --all):
-mintmap accept path/to/django/project --group kind:session --reviewer "alice" --note "initial review"
+Then point it at the Django project (the directory that contains `manage.py`) and review what it finds:
+
+```bash
+mintmap scan   path/to/django/project            # the review queue, path evidence and the gaps
+mintmap init   path/to/django/project            # write mintmap.lock (all entries unreviewed)
+# review every group the scan lists, then record the decision: one --group at a time
+# (kind:session, kind:token, ..., settings), or all of them at once after the review:
+mintmap accept path/to/django/project --all --reviewer "alice" --note "initial review"
+mintmap diff   path/to/django/project; echo $?   # must print exit 0; 64 means some entries are still unreviewed
 git add path/to/django/project/mintmap.lock && git commit -m "Add reviewed MintMap lock"
 ```
 
-The text report of `scan` starts with a **review queue** (since 0.6.0a1): confirmed paths grouped by credential kind
-(`kind:session`, `kind:token`, `kind:precursor`, `kind:custom`, `kind:other`) and entry point, candidate sites by
-kind, the settings groups and the watched groups; inside a group the entries are ranked by a transparent risk
-score (credential kind, check evidence, reachability, confidence; an unrouted path is scored like a reachable one,
-because on unfamiliar code a route MintMap did not see is the common case), each with a `why` line. The ranking is
-a hint, not a verdict: in the evaluation, false alarms were sometimes ranked high and an administrator setting any
-user's password was ranked low.
-`mintmap accept --group <group>` accepts one such group. Lock entries carry the same information in an informational `review` block that `diff` ignores (locks
-written by 0.5.0a1 stay valid; `mintmap update` adds it).
+| Command | What it does |
+|---|---|
+| `mintmap scan <dir>` | Prints the review queue, the check evidence of each path it reports and the gaps. `--json out.json` writes the full report |
+| `mintmap init <dir>` | Writes `mintmap.lock` with every entry unreviewed |
+| `mintmap accept <dir> ...` | Records a review: `--group <group>`, `--all`, or entry ids, with `--reviewer <name>` |
+| `mintmap diff <dir>` | Compares the code with the lock and exits with a [bitmask](#exit-codes). This is what CI runs |
+| `mintmap update <dir>` | After an intended change: refreshes the lock (changed entries become unreviewed again) |
+| `mintmap --version` | Prints the version (since 0.6.0a2) |
 
-After an intended change: `mintmap update <dir>` refreshes the lock (changed entries become unreviewed again),
-then `mintmap accept <dir> <ids...> --reviewer <name>`.
+**The review queue.** The text report of `scan` starts with a review queue (since 0.6.0a1): confirmed paths
+grouped by credential kind (`kind:session`, `kind:token`, `kind:precursor`, `kind:custom`, `kind:other`) and entry
+point, candidate sites by kind, the settings groups and the watched groups. Inside a group the entries are ranked
+by a transparent risk score, each with a `why` line. The ranking is a hint, not a verdict: in the evaluation,
+false alarms were sometimes ranked high and an administrator setting any user's password was ranked low.
+`mintmap accept --group <group>` accepts one such group. Details: [docs/CONCEPTS.md](docs/CONCEPTS.md#the-review-queue).
 
-Optional: `--library-path <dir>` lets MintMap read library source (still without importing it), which can resolve
-library view aliases in some layouts. In our evaluation it changed no result.
+**After an intended change:** `mintmap update <dir>` refreshes the lock, then
+`mintmap accept <dir> <ids...> --reviewer <name>`.
+
+**Optional:** `--library-path <dir>` lets MintMap read library source (still without importing it), which can
+resolve library view aliases in some layouts. In our evaluation it changed no result.
 
 ## GitHub Action
 
@@ -105,24 +179,32 @@ jobs:
   mintmap:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: mohamedmoatazsec/mintmap@<full-commit-sha>   # pin to the full commit SHA of a release tag
+      # Replace the tag with the release's full commit SHA (keep the tag as a comment): a tag can be moved.
+      - uses: mohamedmoatazsec/mintmap@v0.6.0a2
         with:
           project-dir: .
 ```
 
+To pin the full commit SHA of a release tag, look it up with
+`git ls-remote https://github.com/mohamedmoatazsec/mintmap refs/tags/v0.6.0a2` and write
+`mohamedmoatazsec/mintmap@<sha> # v0.6.0a2`.
+
 The job fails on any finding (configurable with `fail-on`; exit 128, "MintMap could not run", always fails) and
 writes a summary table to the job page. The action runs MintMap from its own checkout with `python -I`, so files
-added by a pull request cannot replace it; no package is built or installed. See [`examples/mintmap.yml`](examples/mintmap.yml).
+added by a pull request cannot replace it; no package is built or installed. It also pauses workflow commands while
+MintMap prints text from the pull request. See [`examples/mintmap.yml`](examples/mintmap.yml).
 
-**The check is only as strong as the review rules around `mintmap.lock`.** Without code-owner review, a pull
-request can accept its own change. Do not run code from the pull request (installing its dependencies, running
-its tests) in the same job before MintMap: anything that runs in the job can replace the check. Follow
-[docs/ENFORCEMENT.md](docs/ENFORCEMENT.md).
+> **The check is only as strong as the review rules around `mintmap.lock`.** Without code-owner review, a pull
+> request can accept its own change. Do not run code from the pull request (installing its dependencies, running
+> its tests) in the same job before MintMap: anything that runs in the job can replace the check. Follow
+> [docs/ENFORCEMENT.md](docs/ENFORCEMENT.md).
 
-## `mintmap diff` exit codes (bitmask)
+## Exit codes
+
+`mintmap diff` exits with a bitmask:
 
 | bit | name | meaning |
 |---|---|---|
@@ -135,29 +217,28 @@ its tests) in the same job before MintMap: anything that runs in the job can rep
 | 64 | `unreviewed` | lock entries not yet accepted |
 | 128 | `error` | MintMap could not run (bad arguments, missing or invalid lock, catalog error, or an internal error) |
 
+<details>
+<summary>Candidate groups, watched groups and shared mint sites</summary>
+
 A candidate group (`candidates:<kind>`) uses the same bits for its sites (a new site sets 1, a vanished one 2, a
 changed one 4, naming new or lost entry points); its findings carry `"tier": "candidate"`. A watched group
 (`watched:<kind>`) does the same with `"tier": "watched"`. A mint site shared by many entry points (one lock entry
 listing them) sets bit 1 when a new entry point reaches it, and the finding names that entry point.
 
-Formatting, comments, docstrings and renamed local variables are normalised and do not change fingerprints. Simple
-extractions of a helper function in the same module are normalised too, but extracting a method, extracting a
-helper that takes expressions as arguments, or moving code to another module still changes the fingerprint (a
-false alarm). Since 0.6.0a1, extracting a method of the same class that no subclass overrides, and helpers called
-with attribute arguments such as `request.META`, are normalised as well, unless a call in the helper could rebind
-the attribute (for example the helper calls `load_account(self, ...)` and the argument is `self.account`); so are
-moving the mint call itself into such a helper, and extracting a method in a class that a hook setting names.
-Moving code to another module or class still is not. Even so, 7 of 22 harmless changes raised a finding in the
-latest evaluation: four extracted helper functions or methods (one named `_check_*`, which reads as a new
-unrecognised check), a value first held in a new local variable, a hook's local import moved to module level, and a
-settings expression rewritten without changing its value.
+</details>
+
+**Refactors.** Formatting, comments, docstrings, renamed local variables and several kinds of extracted helper are
+normalised and do not change fingerprints. Moving code to another module or class still does (a false alarm).
+Even so, 7 of 22 harmless changes raised a finding in the latest evaluation. The exact rules are in
+[docs/CONCEPTS.md](docs/CONCEPTS.md#fingerprints).
 
 ## Accuracy
 
-MintMap 0.6.0a1 (frozen before the test) was measured on three open-source Django projects that nobody looked at
-while it was built: CVAT, Label Studio and Tandoor. The previous release, 0.5.0a1, was run on the same projects as a
-control. The reference inventories were written by separate AI agents (not humans) that never saw the tool's
-output, and every result was re-checked by an adversarial AI verifier that re-ran both versions:
+MintMap 0.6.0a1 (frozen before the test; 0.6.0a2 has the same catalog and gives the same scan results on these
+projects) was measured on three open-source Django projects that nobody looked at while it was built: CVAT, Label
+Studio and Tandoor. The previous release, 0.5.0a1, was run on the same projects as a control. The reference
+inventories were written by separate AI agents (not humans) that never saw the tool's output, and every result was
+re-checked by an adversarial AI verifier that re-ran both versions:
 
 | | 0.6.0a1 | 0.5.0a1 (control) |
 |---|---|---|
@@ -197,22 +278,31 @@ General causes of the misses found in the latest evaluation (0.6.0a1 on CVAT, La
 - Credentials created or edited through the Django admin for project models (`ModelAdmin` saves, admin actions, a
   token field in an admin form). Admin registrations are linked only when the model's `save()` is a known mint.
 - A settings module that star-imports its base module through a source-root alias: the base module's
-  `INSTALLED_APPS`, `MIDDLEWARE`, `AUTHENTICATION_BACKENDS` and `REST_FRAMEWORK` are not read (one generic gap).
+  `INSTALLED_APPS`, `MIDDLEWARE`, `AUTHENTICATION_BACKENDS` and `REST_FRAMEWORK` are not read, and the scan reports
+  only the unresolved import (`settings_star_import_unresolved`) and `missing_setting` gaps, not which settings the
+  unread base module holds.
 - Hooks named in settings and loaded by a project helper (`load_func(settings.X)`), and adapter classes re-exported
   from a package `__init__`: such code is in no fingerprint, so weakening it can pass `diff`.
 - DRF routers extended at run time (one global gap), tokens created by `ModelSerializer.create()` through `super()`,
   and credentials written from request data by an update serializer.
 - Values whose field name has no credential word (`InviteLink.uuid`) and session writes without a principal-like
   signal are set aside in the JSON report only, not watched.
-- Libraries outside the catalog (for example django-auth-ldap) and project code that only such a library calls.
+- Libraries outside the catalog (for example django-auth-ldap) and project code that only such a library calls;
+  their settings (for example `AUTH_LDAP_GLOBAL_OPTIONS`) are in no fingerprint, so weakening them passes `diff` (2
+  of the 23 harmful test changes that passed in the latest evaluation).
 - Not modelled: session lifetime and token revocation checks, project view decorators, admin actions as entry
-  points, signed cookies (`set_signed_cookie`) as credentials, multi-request flows. There is no option to choose the
-  settings module: MintMap follows `DJANGO_SETTINGS_MODULE` in `manage.py`.
+  points, signed cookies (`set_signed_cookie`) as credentials, multi-request flows. There is no option to choose one
+  settings module: MintMap analyses the modules that `DJANGO_SETTINGS_MODULE` literals in the code name and, as
+  alternatives, every other leaf settings module except test settings.
 - Django only. Library knowledge covers Django auth, DRF, SimpleJWT, knox, djoser, dj-rest-auth, django-allauth,
   social-auth, django-otp, two-factor-auth, sesame, oauth-toolkit and a few more (about 15 packages). Other
   libraries usually show up as gaps, but not always.
 
+<details>
+<summary>What 0.6.0a1 added for the blind spots of 0.5.0a1</summary>
+
 0.6.0a1 added general mechanisms for the blind spots of 0.5.0a1:
+
 - hand-written sessions with run-time keys
 - credentials created through related managers and `CreateView`
 - library flows called directly
@@ -221,6 +311,10 @@ General causes of the misses found in the latest evaluation (0.6.0a1 on CVAT, La
 - admin-chosen passwords and step-up state (as candidates)
 
 The evaluation above is the measure of how far that went.
+
+</details>
+
+Each blind spot is an open item in [docs/ROADMAP.md](docs/ROADMAP.md).
 
 ## How is this different from Semgrep or CodeQL?
 
@@ -231,16 +325,81 @@ a diff that fails CI only when the reviewed set changes, and an explicit list of
 MintMap is that package for one framework. It is a combination of established techniques (call-graph tracing,
 library models, baselines), not a new kind of analysis.
 
+## FAQ
+
+**Is it a vulnerability scanner?**
+No. MintMap does not look for bugs and does not say whether a login path is safe. It tells you *that the set of
+ways in has changed*, or that the code or checks on a reviewed one changed, so that a person looks at it.
+
+**Does it run my code?**
+No. MintMap reads source code with Python's `ast` module. It **never imports or runs** the project or its
+libraries, needs no database or settings, and has no dependencies beyond the Python standard library (3.11+).
+
+**Which Python versions?**
+3.11, 3.12, 3.13 and 3.14 are tested. MintMap must run on a Python that can parse the project's code: a project that
+uses Python 3.12 syntax (for example the same quotes nested inside an f-string) needs MintMap on 3.12 or newer,
+otherwise those files are reported as parse failures. Lock fingerprints are the same on Python 3.11, 3.12 and 3.13
+(tested on eight projects), so a lock written with one of these versions can be checked with another; with any
+other version, write the lock with the Python minor version CI uses.
+
+**Which Django versions?**
+MintMap does not import Django, so it does not need a particular version installed. What it knows about Django and
+the other libraries comes from a catalog that was read from specific releases: Django 6.1.2 and 5.2.17, DRF 3.18,
+django-allauth 65 and the others listed in
+[`django_catalog.json`](src/mintmap/data/django_catalog.json) (`verified_package_versions`). Projects on much
+older or newer releases have not been measured.
+
+**How long does a scan take?**
+Seconds, for projects of these sizes. Measured on 2026-11-13 with Python 3.13 on a 2-vCPU Linux machine (Intel
+Xeon, 2.3 GHz), three runs each, on the then-current default branch of each project:
+
+| Project | Python files parsed | `mintmap scan` wall time |
+|---|---|---|
+| `examples/demo` | 9 | 0.1 s |
+| Healthchecks (`255075ce`) | 419 | 1.7 s |
+| Tandoor (`82a1ad8a`) | 343 | 2.6 to 2.8 s |
+| CVAT (`873008de`) | 534 | 7.2 to 7.5 s |
+
+Peak memory over all of these scans was about 170 MB. A much larger codebase takes longer: Zulip (1,769 Python
+files, one of the development projects) took 37 to 42 s (six runs) with a peak of about 400 MB, measured with
+Python 3.13 on a 4-vCPU Intel Xeon at 2.1 GHz. `diff` runs the same analysis and then compares it with the lock.
+
+**Does it replace code review of authentication changes?**
+No. It points the review at the right pull requests. It misses things (see [Accuracy](#accuracy)), and the
+check is only as strong as the review rules around the lock (see [docs/ENFORCEMENT.md](docs/ENFORCEMENT.md)).
+
+**Can I use it with Flask, FastAPI or another framework?**
+No. Django only.
+
+## Documentation
+
+| Document | What is in it |
+|---|---|
+| [docs/CONCEPTS.md](docs/CONCEPTS.md) | Paths, candidates, watched sites, gaps, settings groups, the review queue, the lock, fingerprints |
+| [docs/ENFORCEMENT.md](docs/ENFORCEMENT.md) | The GitHub settings that make the check binding |
+| [docs/EVALUATION.md](docs/EVALUATION.md) | How the accuracy numbers were measured, per project and per round |
+| [docs/ROADMAP.md](docs/ROADMAP.md) | The known blind spots as open work |
+| [examples/demo](examples/demo) | The demo project, its lock and the bad pull request |
+| [CHANGELOG.md](CHANGELOG.md) | Release notes |
+
 ## Contributing
 
-The library catalog (`src/mintmap/data/django_catalog.json`) is the most valuable place to help: entries cite the
-library source file they were read from, with a line number where the fact is line-specific. Bug reports with a minimal Django snippet that MintMap
-misses silently are especially welcome. Tests: `python -I -m unittest discover -s tests -t tests`.
+Contributions are welcome: see [CONTRIBUTING.md](CONTRIBUTING.md). The library catalog
+(`src/mintmap/data/django_catalog.json`) is the most valuable place to help: entries cite the library source file
+they were read from, with a line number where the fact is line-specific. Bug reports with a minimal Django snippet
+that MintMap misses silently are especially welcome. Tests: `python -I -m unittest discover -s tests -t tests`.
+
+To report a vulnerability in MintMap itself, see [SECURITY.md](SECURITY.md).
+
+<details>
+<summary>Development history</summary>
 
 The internal development log of the prototype (design notes, rounds 1 and 2 in detail including their failures;
-rounds 3 and 4 are summarised in [docs/EVALUATION.md](docs/EVALUATION.md)) is in
-[docs/DEVELOPMENT_HISTORY.md](docs/DEVELOPMENT_HISTORY.md). Its commands and paths refer to the prototype, not to
-this package.
+rounds 3 and 4 are summarised in [docs/EVALUATION.md](docs/EVALUATION.md)) is archived in
+[docs/history/DEVELOPMENT_HISTORY.md](docs/history/DEVELOPMENT_HISTORY.md). Its commands and paths refer to the
+prototype, not to this package.
+
+</details>
 
 ## License
 

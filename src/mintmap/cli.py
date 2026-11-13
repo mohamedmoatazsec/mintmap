@@ -5,6 +5,7 @@
   mintmap update <project_dir> [--lock mintmap.lock]
   mintmap diff   <project_dir> [--lock mintmap.lock] [--json findings.json]
   mintmap accept <project_dir> (ID... | --group GROUP | --all) --reviewer NAME [--note TEXT] [--lock mintmap.lock]
+  mintmap --version
 
 Project code is parsed with `ast`; it is never imported or executed.
 Exit code 128 means MintMap could not run (bad arguments, lock or catalog, or an internal error).
@@ -17,7 +18,7 @@ import os
 import sys
 
 
-from .core.analysis import Analysis
+from .core.analysis import Analysis, TOOL_VERSION
 from .core.catalog import load_catalog, DEFAULT_CATALOG, CatalogError
 from .core.lockfile import build_lock, merge_lock, diff, dump, BIT_NAMES
 from .core.project import DEFAULT_EXCLUDED_DIRS
@@ -127,6 +128,22 @@ def review_queue(report: dict) -> list:
 WATCHED_SHOWN = 15
 
 
+def _one_line(text: object) -> str:
+    """Text from the analysed code on one output line: control, format and line-separator characters are escaped,
+    so a string in a pull request cannot start a line that CI runners read as a command (for example `::error::`)."""
+    return "".join(ch if ch.isprintable() else ch.encode("unicode_escape").decode("ascii") for ch in str(text))
+
+
+def _lock_file_problem(lock_path: str):
+    """Why MintMap must not read or write the lock: a symbolic link (a pull request can point it at a file outside the
+    project, SECURITY.md) or something that is not a regular file (a FIFO blocks, /dev/zero never ends)."""
+    if os.path.islink(lock_path):
+        return "is a symbolic link"
+    if os.path.exists(lock_path) and not os.path.isfile(lock_path):
+        return "is not a regular file"
+    return None
+
+
 def summarize(report: dict) -> str:
     cov = report["coverage"]
     lines = [f"MintMap {report['tool']['version']}  project={report['project']}",
@@ -143,6 +160,9 @@ def summarize(report: dict) -> str:
              f"{cov.get('paths_shadowed', 0)} shadowed by an earlier route; shadowed routes: "
              f"{cov.get('routes_shadowed', 0)}, library sub-routes: {cov.get('library_subroutes_shadowed', 0)}, "
              f"possibly shadowed (conditional earlier route): {cov.get('routes_may_be_shadowed', 0)})"]
+    if cov.get("dependency_files_not_read"):
+        lines.append(f"dependency files not read (links outside the project, or not regular files): "
+                     f"{[d['file'] for d in cov['dependency_files_not_read']]}")
     lines += review_queue(report)
     lines.append("PATH DETAILS (check evidence), in review-queue order")
     order = sorted(report["paths"], key=lambda p: (review.group_key(p["review"]["group"]),
@@ -187,7 +207,8 @@ def summarize(report: dict) -> str:
     if len(cov["gaps"]) > 40:
         lines.append(f"  ... {len(cov['gaps']) - 40} more (see --json)")
     lines.append(f"catalog entries not mapped to symbols: {len(report['tool']['catalog_entries_unmapped'])}")
-    return "\n".join(lines)
+    # route strings, gap details, reasons and file names come from the analysed code: one output line each
+    return "\n".join(_one_line(line) for line in lines)
 
 
 def _load_lock(lock_path: str):
@@ -248,7 +269,7 @@ def run_accept(args, lock_path: str) -> int:
         e["review_status"] = "accepted"
         e["reviewer"] = args.reviewer
         e["policy_note"] = args.note
-        print(f"accepted {e['id']}")
+        print(f"accepted {_one_line(e['id'])}")
     with open(lock_path, "w") as fh:
         fh.write(dump(lock))
     left = sum(1 for e in entries if e.get("review_status") != "accepted")
@@ -260,6 +281,7 @@ def run_accept(args, lock_path: str) -> int:
 
 def main(argv=None) -> int:
     ap = _Parser(prog="mintmap", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--version", action="version", version=f"mintmap {TOOL_VERSION}")
     sub = ap.add_subparsers(dest="cmd", required=True, parser_class=_Parser)
     for name in ("scan", "init", "update", "diff"):
         sp = sub.add_parser(name)
@@ -302,6 +324,11 @@ def main(argv=None) -> int:
         print(f"mintmap: not a directory: {args.project_dir}", file=sys.stderr)
         return EXIT_ERROR
     lock_path = getattr(args, "lock", None) or os.path.join(args.project_dir, "mintmap.lock")
+    why = None if args.cmd == "scan" else _lock_file_problem(lock_path)
+    if why:
+        print(f"mintmap: {_one_line(lock_path)} {why}; MintMap reads and writes only a regular lock file",
+              file=sys.stderr)
+        return EXIT_ERROR
     if args.cmd == "accept":
         return run_accept(args, lock_path)
     try:
@@ -331,7 +358,7 @@ def main(argv=None) -> int:
         with open(lock_path, "w") as fh:
             fh.write(dump(new))
         for n in notes:
-            print(n)
+            print(_one_line(n))
         print(f"updated {lock_path}: {len(new['paths'])} path(s)")
         return 0
     findings, code = diff(lock, report)
@@ -339,7 +366,7 @@ def main(argv=None) -> int:
         with open(args.json, "w") as fh:
             fh.write(dump(dict(exit_code=code, findings=findings)))
     for f in findings:
-        print(f"{f['kind'].upper():22} {f['path_id'] or '-':17} {f['message']}")
+        print(f"{f['kind'].upper():22} {_one_line(f['path_id'] or '-'):17} {_one_line(f['message'])}")
     names = [n for b, n in sorted(BIT_NAMES.items()) if code & b]
     print(f"exit {code} ({', '.join(names) or 'ok'})")
     return code
@@ -363,7 +390,7 @@ def entry(argv=None) -> int:
     except Exception as exc:  # RecursionError, OSError from a dangling symlink, malformed lock, ...
         import traceback
         traceback.print_exc()
-        print(f"mintmap: internal error: {type(exc).__name__}: {exc}", file=sys.stderr)
+        print(f"mintmap: internal error: {type(exc).__name__}: {_one_line(exc)}", file=sys.stderr)
         return EXIT_ERROR
 
 

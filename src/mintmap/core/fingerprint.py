@@ -277,7 +277,13 @@ def stable_dump(node) -> str:
     return repr(node)
 
 
-class _StableUnparser(ast._Unparser):
+try:  # the unparser is private; Python 3.14 moved it from ast to _ast_unparse
+    from ast import _Unparser as _BaseUnparser, _ALL_QUOTES, _MULTI_QUOTES, _Precedence
+except ImportError:
+    from _ast_unparse import Unparser as _BaseUnparser, _ALL_QUOTES, _MULTI_QUOTES, _Precedence
+
+
+class _StableUnparser(_BaseUnparser):
     """`ast.unparse` with Python 3.13's rendering of f-strings on every supported version (release 0.5.0a1 fix).
 
     Unparsed text ends up in gap keys and in settings values, which the lock compares. Python 3.11 and 3.12 render
@@ -293,7 +299,7 @@ class _StableUnparser(ast._Unparser):
                 self._write_fstring_inner(value)
             parts.append(("".join(buffer), isinstance(value, ast.Constant)))
         out = []
-        quote_types = list(ast._ALL_QUOTES)
+        quote_types = list(_ALL_QUOTES)
         fallback_to_repr = False
         for value, is_constant in parts:
             if is_constant:
@@ -305,7 +311,7 @@ class _StableUnparser(ast._Unparser):
                 quote_types = new_quote_types
             else:
                 if "\n" in value:
-                    quote_types = [q for q in quote_types if q in ast._MULTI_QUOTES]
+                    quote_types = [q for q in quote_types if q in _MULTI_QUOTES]
                     assert quote_types
                 narrowed = [q for q in quote_types if q not in value]
                 if narrowed:
@@ -338,7 +344,7 @@ class _StableUnparser(ast._Unparser):
 
     def visit_FormattedValue(self, node):
         inner = type(self)()
-        inner.set_precedence(ast._Precedence.TEST.next(), node.value)
+        inner.set_precedence(_Precedence.TEST.next(), node.value)
         with self.delimit("{", "}"):
             expr = inner.visit(node.value)
             if expr.startswith("{"):

@@ -25,7 +25,7 @@ inputs:
     default: "255"
   python-version:
     description: >
-      Python used to run MintMap (3.11 or newer; 3.11, 3.12 and 3.13 are tested). It must be able to parse the
+      Python used to run MintMap (3.11 or newer; 3.11 to 3.14 are tested). It must be able to parse the
       project's code (at least the Python version whose syntax the project uses); files it cannot parse are
       reported as parse failures. Lock fingerprints are the same on 3.11, 3.12 and 3.13; with any other version,
       write the lock with the same Python minor version that CI uses.
@@ -44,7 +44,7 @@ runs:
   steps:
     # update-environment: false leaves the job's PATH and `python` unchanged; MintMap uses the interpreter path.
     - id: python
-      uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+      uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
       with:
         python-version: ${{ inputs.python-version }}
         update-environment: false
@@ -74,8 +74,13 @@ runs:
         args=(diff "$MM_PROJECT" --json "$findings")
         if [ -n "$MM_LOCK" ]; then args+=(--lock "$MM_LOCK"); fi
         if [ -n "$MM_LIBS" ]; then args+=(--library-path "$MM_LIBS"); fi
+        # Text from the pull request appears in MintMap's output; stop the runner from reading workflow commands
+        # (`::error::`, `::add-mask::`, ...) in it. The token is random, so the output cannot end the pause.
+        stop="$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n')"
+        echo "::stop-commands::$stop"
         "${run[@]}" "${args[@]}"
         code=$?
+        echo "::$stop::"
         echo "exit-code=$code" >> "$GITHUB_OUTPUT"
         echo "findings=$findings" >> "$GITHUB_OUTPUT"
         "${run[@]}" --summary "$findings" "$code" >> "$GITHUB_STEP_SUMMARY"

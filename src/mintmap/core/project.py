@@ -65,6 +65,24 @@ DOTTED_REF_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)+$
 _DOTTED_STRING_FILES = re.compile(r"(^|/)(manage|wsgi|asgi|urls|apps|settings\w*|celery)\.py$|(^|/)settings/")
 
 
+NOT_READ_REASON = "not read: a link to a file outside the project directory, or not a regular file"
+
+
+def inside_regular_file(path: str, root: str) -> bool:
+    """False for a symbolic link that resolves outside `root` and for anything that is not a regular file (a FIFO,
+    /dev/zero, ...): MintMap does not read files outside the analysed project (SECURITY.md). A dangling link stays
+    True, so opening it still fails loudly (exit 128)."""
+    real = os.path.realpath(path)
+    if not os.path.exists(real):
+        return True
+    base = os.path.realpath(root)
+    try:
+        inside = os.path.commonpath([real, base]) == base
+    except ValueError:      # Windows: different drives
+        return False
+    return inside and os.path.isfile(real)
+
+
 @dataclass
 class Gap:
     type: str
@@ -300,6 +318,8 @@ class Project:
 
     def _parse(self, ap, rel):
         try:
+            if not inside_regular_file(ap, self.root):
+                raise ValueError(NOT_READ_REASON)
             with open(ap, "rb") as fh:
                 src = fh.read()
             return ast.parse(src, filename=rel), None

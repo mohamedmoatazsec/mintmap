@@ -1,0 +1,14 @@
+diff --git a/members/views.py b/members/views.py
+index cc070b0..f3e72b6 100644
+--- a/members/views.py
++++ b/members/views.py
+@@ -46,8 +46,7 @@ def sign_in_code(request):
+     member = get_user_model().objects.get(pk=member_id)
+     form = CodeForm(member.authenticator.seed, request.POST or None)
+     if request.method == "POST":
+-        if not form.is_valid():
+-            return render(request, "members/sign_in_code.html", {"form": form}, status=400)
++        form.is_valid()  # field errors are shown on the next page
+         del request.session[PENDING_KEY]
+         login(request, member, backend="django.contrib.auth.backends.ModelBackend")
+         return redirect("/")

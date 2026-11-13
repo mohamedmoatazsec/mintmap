@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "mintmap"
-version = "0.6.0a1"
-description = "A reviewed map of every code path that creates a login session or credential in a Django app, enforced in CI."
+version = "0.6.0a2"
+description = "A reviewed map of the code paths that create a login session or credential in a Django app, enforced in CI."
 readme = "README.md"
 license = "Apache-2.0"
 license-files = ["LICENSE"]
@@ -23,16 +23,20 @@ classifiers = [
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
     "Topic :: Security",
     "Topic :: Software Development :: Quality Assurance",
 ]
 
 [project.urls]
 Homepage = "https://github.com/mohamedmoatazsec/mintmap"
+Documentation = "https://github.com/mohamedmoatazsec/mintmap/blob/main/docs/CONCEPTS.md"
+Evaluation = "https://github.com/mohamedmoatazsec/mintmap/blob/main/docs/EVALUATION.md"
+Changelog = "https://github.com/mohamedmoatazsec/mintmap/blob/main/CHANGELOG.md"
 Issues = "https://github.com/mohamedmoatazsec/mintmap/issues"
 
 [project.scripts]
-mintmap = "mintmap.cli:entry"
+mintmap = "mintmap._launch:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

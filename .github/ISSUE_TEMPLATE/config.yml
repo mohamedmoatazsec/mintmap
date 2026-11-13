@@ -1,0 +1,5 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Report a vulnerability in MintMap itself
+    url: https://github.com/mohamedmoatazsec/mintmap/security/advisories/new
+    about: Please report security problems in MintMap privately, not as a public issue.

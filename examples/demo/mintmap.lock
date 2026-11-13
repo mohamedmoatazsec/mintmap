@@ -1,0 +1,829 @@
+{
+  "candidates": [
+    {
+      "fingerprint": {
+        "overall": "0d515f5ce7213e9ed7605d78"
+      },
+      "group": "password_set",
+      "id": "candidates:password_set",
+      "kind": "candidate_group",
+      "members": {
+        "cd678fdb9fe16dfa": {
+          "analysis_complete": true,
+          "components": {
+            "callees": "a0e321f902e770d05f37fabd",
+            "catalog": "93aa86d15eb925881b209660",
+            "checks": "a0e321f902e770d05f37fabd",
+            "code": "3297b1b5b221a93eba33591d",
+            "deps": "a0e321f902e770d05f37fabd",
+            "hooks": "a0e321f902e770d05f37fabd",
+            "settings": "a0e321f902e770d05f37fabd"
+          },
+          "file": "members/views.py",
+          "fingerprint": "6d0bddaf49c599d1e68f742e",
+          "gaps": [],
+          "line": 66,
+          "mint": "password_set[set_password]",
+          "purpose": "candidate_password_set",
+          "rank": "medium",
+          "reached_from": [
+            "route:members/reset/<uidb64>/<token>/|members.views.finish_reset"
+          ],
+          "reason": "sets a password from a value it does not generate: member.set_password(form.cleaned_data['password'])",
+          "site": "members.views.finish_reset",
+          "status": "check_guards_mint"
+        }
+      },
+      "policy_note": "Baseline of the demo project",
+      "review_status": "accepted",
+      "reviewer": "demo-reviewer"
+    }
+  ],
+  "coverage": {
+    "dependency_files": [],
+    "dependency_specs": {},
+    "entries_total": 4,
+    "excluded_dirs": [
+      ".git",
+      ".hg",
+      ".mypy_cache",
+      ".nox",
+      ".pytest_cache",
+      ".svn",
+      ".tox",
+      ".venv",
+      "__pycache__",
+      "build",
+      "dist",
+      "env",
+      "node_modules",
+      "site-packages",
+      "venv"
+    ],
+    "files_parsed": 9,
+    "files_seen": 9,
+    "gap_keys": [],
+    "gaps_by_type": {},
+    "limits": {
+      "chain_limit": 16,
+      "fingerprint_depth": 4
+    },
+    "parse_failures": [],
+    "root_urlconfs": [
+      "teahouse.urls"
+    ],
+    "routes_total": 4,
+    "settings_modules": [
+      "teahouse.settings"
+    ],
+    "test_code": {
+      "excluded_files": 0,
+      "included": false,
+      "reincluded": []
+    }
+  },
+  "mintmap_lock_version": 1,
+  "paths": [
+    {
+      "analysis_complete": true,
+      "chain": [
+        "members.views.ApiTokenView.post"
+      ],
+      "entry_point": {
+        "functions": [
+          "members.views.ApiTokenView.post (http_handler)"
+        ],
+        "gates": [],
+        "id": "route:members/api/token/|members.views.ApiTokenView",
+        "kind": "route",
+        "notes": [],
+        "route": {
+          "conditional": false,
+          "decorators": [],
+          "file": "members/urls.py",
+          "kind": "project_class",
+          "line": 9,
+          "name": "api-token",
+          "pattern": "members/api/token/",
+          "target": "members.views.ApiTokenView",
+          "urlconf_chain": [
+            "teahouse.urls",
+            "members.urls"
+          ]
+        },
+        "view": "members.views.ApiTokenView"
+      },
+      "evidence": {
+        "checks": [
+          {
+            "catalog_ref": "django.contrib.auth.authenticate / aauthenticate",
+            "check": "django.contrib.auth.authenticate",
+            "detail": "mint only reachable when `member` (check result) is successful",
+            "factor": "password",
+            "function": "members.views.ApiTokenView.post",
+            "line": 78,
+            "relation": "guards_mint",
+            "same_user": "shown",
+            "via": "catalog"
+          }
+        ],
+        "context": [],
+        "factors": {
+          "password": "guards_mint+same_user_shown"
+        },
+        "hooks": [],
+        "shadowed_by": null,
+        "status": "check_guards_mint",
+        "status_if_reachable": null,
+        "unrecognized_checks": [],
+        "validation_methods": []
+      },
+      "fingerprint": {
+        "callee_functions": [],
+        "check_functions": [],
+        "components": {
+          "callees": "e3b0c44298fc1c149afbf4c8",
+          "catalog": "b04c39815b0152ac86d80f4c",
+          "checks": "e3b0c44298fc1c149afbf4c8",
+          "code": "9c238f68a8f0020a4e6ca08e",
+          "deps": "e3b0c44298fc1c149afbf4c8",
+          "hooks": "e3b0c44298fc1c149afbf4c8",
+          "settings": "a530ec03ddb0f4f2e41ad90e"
+        },
+        "fingerprint_depth": 4,
+        "hooks": [],
+        "overall": "32d77c024a1651c9f5b45d68",
+        "path_functions": [
+          "members.views.ApiTokenView.post"
+        ],
+        "settings_dependencies": [
+          "group:AUTHENTICATION_BACKENDS"
+        ]
+      },
+      "fingerprint_complete": true,
+      "gaps": [],
+      "id": "363c72388024ca9c",
+      "mint_site": {
+        "api": "rest_framework.authtoken.models.Token.objects.get_or_create",
+        "catalog_ref": "rest_framework.authtoken.models.Token.save / generate_key",
+        "kind": "call",
+        "library_route": null,
+        "library_source": null,
+        "provided_by": "project_code",
+        "provided_via": null,
+        "purpose": "api_token",
+        "purpose_basis": "catalog:rest_framework.authtoken.models.Token.save / generate_key",
+        "purpose_note": "",
+        "site": {
+          "call": "Token.objects.get_or_create",
+          "file": "members/views.py",
+          "function": "members.views.ApiTokenView.post",
+          "line": 82
+        }
+      },
+      "policy_note": "Baseline of the demo project",
+      "purpose": "api_token",
+      "review": {
+        "group": "kind:token",
+        "risk": "low",
+        "score": 3,
+        "why": [
+          "token credential (api_token)",
+          "a recognised check guards the mint",
+          "reachable (route)"
+        ]
+      },
+      "review_status": "accepted",
+      "reviewer": "demo-reviewer"
+    },
+    {
+      "analysis_complete": true,
+      "chain": [
+        "members.views.finish_reset"
+      ],
+      "entry_point": {
+        "functions": [
+          "members.views.finish_reset (http_handler)"
+        ],
+        "gates": [],
+        "id": "route:members/reset/<uidb64>/<token>/|members.views.finish_reset",
+        "kind": "route",
+        "notes": [],
+        "route": {
+          "conditional": false,
+          "decorators": [],
+          "file": "members/urls.py",
+          "kind": "project_function",
+          "line": 8,
+          "name": "finish-reset",
+          "pattern": "members/reset/<uidb64>/<token>/",
+          "target": "members.views.finish_reset",
+          "urlconf_chain": [
+            "teahouse.urls",
+            "members.urls"
+          ]
+        },
+        "view": "members.views.finish_reset"
+      },
+      "evidence": {
+        "checks": [
+          {
+            "catalog_ref": "django.contrib.auth.tokens.PasswordResetTokenGenerator.check_token",
+            "check": "django.contrib.auth.tokens.PasswordResetTokenGenerator.check_token",
+            "detail": "check is in a condition whose success is required to reach the mint (branch or early exit)",
+            "factor": "reset_token_possession",
+            "function": "members.views.finish_reset",
+            "line": 62,
+            "relation": "guards_mint",
+            "same_user": "shown",
+            "via": "catalog"
+          }
+        ],
+        "context": [],
+        "factors": {
+          "reset_token_possession": "guards_mint+same_user_shown"
+        },
+        "hooks": [],
+        "shadowed_by": null,
+        "status": "check_guards_mint",
+        "status_if_reachable": null,
+        "unrecognized_checks": [],
+        "validation_methods": []
+      },
+      "fingerprint": {
+        "callee_functions": [],
+        "check_functions": [],
+        "components": {
+          "callees": "e3b0c44298fc1c149afbf4c8",
+          "catalog": "1954b0e8159df9a58c0c39de",
+          "checks": "e3b0c44298fc1c149afbf4c8",
+          "code": "3690ed02b54c2ed7cb3b1b8c",
+          "deps": "e3b0c44298fc1c149afbf4c8",
+          "hooks": "e3b0c44298fc1c149afbf4c8",
+          "settings": "e3b0c44298fc1c149afbf4c8"
+        },
+        "fingerprint_depth": 4,
+        "hooks": [],
+        "overall": "a8e353262e5855cf8d3c502d",
+        "path_functions": [
+          "members.views.finish_reset"
+        ],
+        "settings_dependencies": []
+      },
+      "fingerprint_complete": true,
+      "gaps": [],
+      "id": "1686eb3b06d009ce",
+      "mint_site": {
+        "api": "django.contrib.auth.login",
+        "catalog_ref": "django.contrib.auth.login",
+        "kind": "call",
+        "library_route": null,
+        "library_source": null,
+        "provided_by": "project_code",
+        "provided_via": null,
+        "purpose": "full_session",
+        "purpose_basis": "catalog:django.contrib.auth.login",
+        "purpose_note": "",
+        "site": {
+          "call": "login",
+          "file": "members/views.py",
+          "function": "members.views.finish_reset",
+          "line": 68
+        }
+      },
+      "policy_note": "Baseline of the demo project",
+      "purpose": "full_session",
+      "review": {
+        "group": "kind:session",
+        "risk": "medium",
+        "score": 4,
+        "why": [
+          "session credential (full_session)",
+          "a recognised check guards the mint",
+          "reachable (route)"
+        ]
+      },
+      "review_status": "accepted",
+      "reviewer": "demo-reviewer"
+    },
+    {
+      "analysis_complete": true,
+      "chain": [
+        "members.views.sign_in_code"
+      ],
+      "entry_point": {
+        "functions": [
+          "members.views.sign_in_code (http_handler)"
+        ],
+        "gates": [],
+        "id": "route:members/sign-in/code/|members.views.sign_in_code",
+        "kind": "route",
+        "notes": [],
+        "route": {
+          "conditional": false,
+          "decorators": [],
+          "file": "members/urls.py",
+          "kind": "project_function",
+          "line": 7,
+          "name": "sign-in-code",
+          "pattern": "members/sign-in/code/",
+          "target": "members.views.sign_in_code",
+          "urlconf_chain": [
+            "teahouse.urls",
+            "members.urls"
+          ]
+        },
+        "view": "members.views.sign_in_code"
+      },
+      "evidence": {
+        "checks": [
+          {
+            "catalog_ref": null,
+            "check": "members.forms.CodeForm.is_valid",
+            "detail": "check is in a condition whose success is required to reach the mint (branch or early exit)",
+            "factor": "otp",
+            "function": "members.views.sign_in_code",
+            "line": 49,
+            "relation": "guards_mint",
+            "same_user": "unproven",
+            "via": "form"
+          }
+        ],
+        "context": [
+          "members.views.sign_in_code reads request.session: state from an earlier request (e.g. a stashed login or MFA challenge) may decide this mint; per-request analysis cannot see checks made in that earlier request"
+        ],
+        "factors": {
+          "otp": "guards_mint"
+        },
+        "hooks": [],
+        "shadowed_by": null,
+        "status": "check_guards_mint",
+        "status_if_reachable": null,
+        "unrecognized_checks": [],
+        "validation_methods": [
+          "members.forms.CodeForm.clean_code"
+        ]
+      },
+      "fingerprint": {
+        "callee_functions": [
+          "members.forms.CodeForm.__init__"
+        ],
+        "check_functions": [
+          "members.forms.CodeForm.clean_code"
+        ],
+        "components": {
+          "callees": "c817f9b13cc2970a3786ed30",
+          "catalog": "84b8faf5131dcf013261c27b",
+          "checks": "97b4f53b7d74e884b875a25e",
+          "code": "a0423052e8dbb56a9d1dba3d",
+          "deps": "e3b0c44298fc1c149afbf4c8",
+          "hooks": "e3b0c44298fc1c149afbf4c8",
+          "settings": "e3b0c44298fc1c149afbf4c8"
+        },
+        "fingerprint_depth": 4,
+        "hooks": [],
+        "overall": "aa15278dfb0c03c561972435",
+        "path_functions": [
+          "members.views.sign_in_code"
+        ],
+        "settings_dependencies": []
+      },
+      "fingerprint_complete": true,
+      "gaps": [],
+      "id": "033339f757191ebb",
+      "mint_site": {
+        "api": "django.contrib.auth.login",
+        "catalog_ref": "django.contrib.auth.login",
+        "kind": "call",
+        "library_route": null,
+        "library_source": null,
+        "provided_by": "project_code",
+        "provided_via": null,
+        "purpose": "full_session",
+        "purpose_basis": "catalog:django.contrib.auth.login",
+        "purpose_note": "",
+        "site": {
+          "call": "login",
+          "file": "members/views.py",
+          "function": "members.views.sign_in_code",
+          "line": 52
+        }
+      },
+      "policy_note": "Baseline of the demo project",
+      "purpose": "full_session",
+      "review": {
+        "group": "kind:session",
+        "risk": "medium",
+        "score": 4,
+        "why": [
+          "session credential (full_session)",
+          "a recognised check guards the mint",
+          "reachable (route)"
+        ]
+      },
+      "review_status": "accepted",
+      "reviewer": "demo-reviewer"
+    },
+    {
+      "analysis_complete": true,
+      "chain": [
+        "members.views.sign_in"
+      ],
+      "entry_point": {
+        "functions": [
+          "members.views.sign_in (http_handler)"
+        ],
+        "gates": [],
+        "id": "route:members/sign-in/|members.views.sign_in",
+        "kind": "route",
+        "notes": [],
+        "route": {
+          "conditional": false,
+          "decorators": [],
+          "file": "members/urls.py",
+          "kind": "project_function",
+          "line": 6,
+          "name": "sign-in",
+          "pattern": "members/sign-in/",
+          "target": "members.views.sign_in",
+          "urlconf_chain": [
+            "teahouse.urls",
+            "members.urls"
+          ]
+        },
+        "view": "members.views.sign_in"
+      },
+      "evidence": {
+        "checks": [
+          {
+            "catalog_ref": "django.contrib.auth.authenticate / aauthenticate",
+            "check": "django.contrib.auth.authenticate",
+            "detail": "mint only reachable when `member` (check result) is successful",
+            "factor": "password",
+            "function": "members.views.sign_in",
+            "line": 29,
+            "relation": "guards_mint",
+            "same_user": "shown",
+            "via": "catalog"
+          }
+        ],
+        "context": [
+          "members.views.sign_in reads request.session: state from an earlier request (e.g. a stashed login or MFA challenge) may decide this mint; per-request analysis cannot see checks made in that earlier request"
+        ],
+        "factors": {
+          "password": "guards_mint+same_user_shown"
+        },
+        "hooks": [],
+        "shadowed_by": null,
+        "status": "check_guards_mint",
+        "status_if_reachable": null,
+        "unrecognized_checks": [],
+        "validation_methods": []
+      },
+      "fingerprint": {
+        "callee_functions": [],
+        "check_functions": [],
+        "components": {
+          "callees": "e3b0c44298fc1c149afbf4c8",
+          "catalog": "2554a748e98c712a76f64512",
+          "checks": "e3b0c44298fc1c149afbf4c8",
+          "code": "27dc2e27aa84beb21fd85234",
+          "deps": "e3b0c44298fc1c149afbf4c8",
+          "hooks": "e3b0c44298fc1c149afbf4c8",
+          "settings": "a530ec03ddb0f4f2e41ad90e"
+        },
+        "fingerprint_depth": 4,
+        "hooks": [],
+        "overall": "51fa48467039e57fb9d68d20",
+        "path_functions": [
+          "members.views.sign_in"
+        ],
+        "settings_dependencies": [
+          "group:AUTHENTICATION_BACKENDS"
+        ]
+      },
+      "fingerprint_complete": true,
+      "gaps": [],
+      "id": "1b7d4559cbfd2737",
+      "mint_site": {
+        "api": "django.contrib.auth.login",
+        "catalog_ref": "django.contrib.auth.login",
+        "kind": "call",
+        "library_route": null,
+        "library_source": null,
+        "provided_by": "project_code",
+        "provided_via": null,
+        "purpose": "full_session",
+        "purpose_basis": "catalog:django.contrib.auth.login",
+        "purpose_note": "",
+        "site": {
+          "call": "login",
+          "file": "members/views.py",
+          "function": "members.views.sign_in",
+          "line": 37
+        }
+      },
+      "policy_note": "Baseline of the demo project",
+      "purpose": "full_session",
+      "review": {
+        "group": "kind:session",
+        "risk": "medium",
+        "score": 4,
+        "why": [
+          "session credential (full_session)",
+          "a recognised check guards the mint",
+          "reachable (route)"
+        ]
+      },
+      "review_status": "accepted",
+      "reviewer": "demo-reviewer"
+    },
+    {
+      "analysis_complete": true,
+      "chain": [
+        "members.views.sign_in"
+      ],
+      "entry_point": {
+        "functions": [
+          "members.views.sign_in (http_handler)"
+        ],
+        "gates": [],
+        "id": "route:members/sign-in/|members.views.sign_in",
+        "kind": "route",
+        "notes": [],
+        "route": {
+          "conditional": false,
+          "decorators": [],
+          "file": "members/urls.py",
+          "kind": "project_function",
+          "line": 6,
+          "name": "sign-in",
+          "pattern": "members/sign-in/",
+          "target": "members.views.sign_in",
+          "urlconf_chain": [
+            "teahouse.urls",
+            "members.urls"
+          ]
+        },
+        "view": "members.views.sign_in"
+      },
+      "evidence": {
+        "checks": [
+          {
+            "catalog_ref": "django.contrib.auth.authenticate / aauthenticate",
+            "check": "django.contrib.auth.authenticate",
+            "detail": "mint only reachable when `member` (check result) is successful",
+            "factor": "password",
+            "function": "members.views.sign_in",
+            "line": 29,
+            "relation": "guards_mint",
+            "same_user": "not_applicable",
+            "via": "catalog"
+          }
+        ],
+        "context": [
+          "members.views.sign_in reads request.session: state from an earlier request (e.g. a stashed login or MFA challenge) may decide this mint; per-request analysis cannot see checks made in that earlier request"
+        ],
+        "factors": {
+          "password": "guards_mint"
+        },
+        "hooks": [],
+        "shadowed_by": null,
+        "status": "check_guards_mint",
+        "status_if_reachable": null,
+        "unrecognized_checks": [],
+        "validation_methods": []
+      },
+      "fingerprint": {
+        "callee_functions": [],
+        "check_functions": [],
+        "components": {
+          "callees": "e3b0c44298fc1c149afbf4c8",
+          "catalog": "334eab15f164ac605267fc1f",
+          "checks": "e3b0c44298fc1c149afbf4c8",
+          "code": "27dc2e27aa84beb21fd85234",
+          "deps": "e3b0c44298fc1c149afbf4c8",
+          "hooks": "e3b0c44298fc1c149afbf4c8",
+          "settings": "a530ec03ddb0f4f2e41ad90e"
+        },
+        "fingerprint_depth": 4,
+        "hooks": [],
+        "overall": "7d400f3ebca201cf2387363e",
+        "path_functions": [
+          "members.views.sign_in"
+        ],
+        "settings_dependencies": [
+          "group:AUTHENTICATION_BACKENDS"
+        ]
+      },
+      "fingerprint_complete": true,
+      "gaps": [],
+      "id": "95fc37508a619b3a",
+      "mint_site": {
+        "api": "session[teahouse_pending_member]",
+        "catalog_ref": null,
+        "kind": "heuristic_custom_credential",
+        "library_route": null,
+        "library_source": null,
+        "provided_by": "project_code",
+        "provided_via": null,
+        "purpose": "custom_session_login_candidate",
+        "purpose_basis": "heuristic: writes a session key that project code (or Django) uses to authenticate a principal (not a catalog API)",
+        "purpose_note": "hand-rolled session login: 'teahouse_pending_member' is read back by members.views.sign_in_code to load the principal",
+        "site": {
+          "call": "session['teahouse_pending_member'] = ...",
+          "file": "members/views.py",
+          "function": "members.views.sign_in",
+          "line": 34
+        }
+      },
+      "policy_note": "Baseline of the demo project",
+      "purpose": "custom_session_login_candidate",
+      "review": {
+        "group": "kind:session",
+        "risk": "low",
+        "score": 3,
+        "why": [
+          "session credential (custom_session_login_candidate)",
+          "a recognised check guards the mint",
+          "reachable (route)",
+          "found by the custom-credential heuristic (lower confidence)"
+        ]
+      },
+      "review_status": "accepted",
+      "reviewer": "demo-reviewer"
+    }
+  ],
+  "project": "demo",
+  "settings": [
+    {
+      "fingerprint": {
+        "overall": "63f64d948f7a1d52b078bc88",
+        "settings": {
+          "MIDDLEWARE": "06564fde115528c1ea79c183"
+        },
+        "sources": {}
+      },
+      "id": "settings:MIDDLEWARE",
+      "items": {
+        "MIDDLEWARE": [
+          "'django.middleware.security.SecurityMiddleware'",
+          "'django.contrib.sessions.middleware.SessionMiddleware'",
+          "'django.middleware.csrf.CsrfViewMiddleware'",
+          "'django.contrib.auth.middleware.AuthenticationMiddleware'"
+        ]
+      },
+      "names": [
+        "MIDDLEWARE"
+      ],
+      "policy_note": "Baseline of the demo project",
+      "review_status": "accepted",
+      "reviewer": "demo-reviewer",
+      "values": {
+        "MIDDLEWARE": "['django.middleware.security.SecurityMiddleware','django.contrib.sessions.middleware.SessionMiddleware','django.middleware.csrf.CsrfViewMiddleware','django.contrib.auth.middleware.AuthenticationMiddleware']"
+      }
+    },
+    {
+      "fingerprint": {
+        "overall": "ccd72e73f69f1551a189a6a0",
+        "settings": {
+          "AUTHENTICATION_BACKENDS": "ffccf97e4f1e338d67eb437d"
+        },
+        "sources": {}
+      },
+      "id": "settings:AUTHENTICATION_BACKENDS",
+      "items": {
+        "AUTHENTICATION_BACKENDS": [
+          "'django.contrib.auth.backends.ModelBackend'"
+        ]
+      },
+      "names": [
+        "AUTHENTICATION_BACKENDS"
+      ],
+      "policy_note": "Baseline of the demo project",
+      "review_status": "accepted",
+      "reviewer": "demo-reviewer",
+      "values": {
+        "AUTHENTICATION_BACKENDS": "['django.contrib.auth.backends.ModelBackend']"
+      }
+    },
+    {
+      "fingerprint": {
+        "overall": "880c106b5cd798add93f39b9",
+        "settings": {
+          "REST_FRAMEWORK": "b4b61ee5639700fc8a837335"
+        },
+        "sources": {}
+      },
+      "id": "settings:REST_FRAMEWORK",
+      "items": {
+        "REST_FRAMEWORK": [
+          "'DEFAULT_AUTHENTICATION_CLASSES': ['rest_framework.authentication.TokenAuthentication']",
+          "'DEFAULT_PERMISSION_CLASSES': ['rest_framework.permissions.IsAuthenticated']"
+        ]
+      },
+      "names": [
+        "REST_FRAMEWORK"
+      ],
+      "policy_note": "Baseline of the demo project",
+      "review_status": "accepted",
+      "reviewer": "demo-reviewer",
+      "values": {
+        "REST_FRAMEWORK": "{'DEFAULT_AUTHENTICATION_CLASSES':['rest_framework.authentication.TokenAuthentication'],'DEFAULT_PERMISSION_CLASSES':['rest_framework.permissions.IsAuthenticated']}"
+      }
+    },
+    {
+      "fingerprint": {
+        "overall": "a6fc5dc0ba8b71f675b5eebd",
+        "settings": {
+          "SESSION_COOKIE_SECURE": "9948f1782b22453480ad27c9"
+        },
+        "sources": {}
+      },
+      "id": "settings:AUTH_CORE",
+      "items": {},
+      "names": [
+        "SESSION_COOKIE_SECURE"
+      ],
+      "policy_note": "Baseline of the demo project",
+      "review_status": "accepted",
+      "reviewer": "demo-reviewer",
+      "values": {
+        "SESSION_COOKIE_SECURE": "True"
+      }
+    },
+    {
+      "fingerprint": {
+        "overall": "6273528591968564fa73092a",
+        "settings": {
+          "<INSTALLED_APPS(auth):0>": "d0531d4accbc01fac9fd1c60"
+        },
+        "sources": {}
+      },
+      "id": "settings:INSTALLED_APPS(auth)",
+      "items": {},
+      "names": [],
+      "policy_note": "Baseline of the demo project",
+      "review_status": "accepted",
+      "reviewer": "demo-reviewer",
+      "values": {}
+    },
+    {
+      "fingerprint": {
+        "overall": "20d575e2b4018d8fa8e69bbe",
+        "settings": {
+          "PASSWORD_RESET_TIMEOUT": "bb392b6cb44be41757d2d620"
+        },
+        "sources": {}
+      },
+      "id": "settings:package:django",
+      "items": {},
+      "names": [
+        "PASSWORD_RESET_TIMEOUT"
+      ],
+      "policy_note": "Baseline of the demo project",
+      "review_status": "accepted",
+      "reviewer": "demo-reviewer",
+      "values": {
+        "PASSWORD_RESET_TIMEOUT": "<dynamic 60 * 60>"
+      }
+    }
+  ],
+  "tool": {
+    "catalog_entries_unmapped": [
+      "allauth.account.auth_backends.AuthenticationBackend.authenticate / _check_password",
+      "allauth.headless.internal.restkit.views.RESTView.handle_input",
+      "allauth.mfa.stages.AuthenticateStage._should_handle",
+      "django.contrib.auth.get_user session-hash verification",
+      "django.test.Client.login / force_login / alogin / aforce_login",
+      "django_otp._handle_auth_login (user_logged_in receiver)",
+      "formtools.wizard.views.WizardView.get_form_list / post / render_done",
+      "knox.auth.TokenAuthentication.authenticate_credentials",
+      "mozilla_django_oidc.auth.OIDCAuthenticationBackend.verify_claims / filter_users_by_claims",
+      "oauth2_provider.backends.OAuth2Backend.authenticate",
+      "oauth2_provider.oauth2_validators.OAuth2Validator.save_bearer_token / _create_access_token / _create_refresh_token / _create_authorization_code",
+      "oauth2_provider.oauth2_validators.OAuth2Validator.validate_code / validate_refresh_token / authenticate_client",
+      "oauth2_provider.oauth2_validators.OAuth2Validator.validate_user",
+      "rest_framework.authentication.BasicAuthentication.authenticate_credentials",
+      "rest_framework.authentication.SessionAuthentication.authenticate",
+      "rest_framework.authentication.TokenAuthentication.authenticate_credentials",
+      "rest_framework.authtoken.management.commands.drf_create_token",
+      "rest_framework_simplejwt.serializers.TokenObtainPairSerializer.validate",
+      "rest_framework_simplejwt.serializers.TokenRefreshSerializer.validate",
+      "social_core.backends.oauth.OAuthAuth.validate_state",
+      "social_core.backends.open_id_connect.OpenIdConnectAuth.validate_and_return_id_token",
+      "social_core.pipeline.social_auth.associate_by_email",
+      "social_django.strategy.DjangoStrategy.restore_session",
+      "two_factor.plugins.webauthn.forms.WebauthnAuthenticationTokenForm._verify_token"
+    ],
+    "catalog_path": "django_catalog.json",
+    "catalog_sha256": "25a13b5c6291d17503b7fa52487e828ec0c518e8401749038b7b69762f8b8c79",
+    "library_paths_count": 0,
+    "name": "mintmap",
+    "overlay_entries_skipped": [],
+    "overlay_sha256": "9caad4611e05cfc9",
+    "python": "3.13",
+    "version": "0.6.0a1"
+  },
+  "watched": []
+}

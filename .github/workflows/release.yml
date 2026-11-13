@@ -1,0 +1,68 @@
+# Builds the sdist and wheel and publishes them to PyPI when a GitHub release is published.
+# Uses PyPI Trusted Publishing (OIDC): there is no API token or password in this repository.
+# PyPI must list this workflow as a (pending) trusted publisher, and the GitHub environment `pypi` should require
+# the maintainer's approval (see CONTRIBUTING.md, "Releasing"). The build tools are pinned with hashes in
+# .github/release-requirements.txt.
+name: release
+on:
+  release:
+    types: [published]
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.13"
+      - name: The release tag must match the package version
+        env:
+          TAG: ${{ github.event.release.tag_name }}
+        run: |
+          version="$(python -I scripts/run_mintmap.py --version)"
+          echo "tag: $TAG, package: $version"
+          test "mintmap ${TAG#v}" = "$version"
+      - name: Unit tests
+        run: python -I -m unittest discover -s tests -t tests
+      - name: Demo
+        run: bash scripts/demo.sh
+      - name: Make README links absolute for PyPI
+        env:
+          TAG: ${{ github.event.release.tag_name }}
+        run: python scripts/pypi_readme.py "$TAG"
+      - name: Build sdist and wheel
+        run: |
+          python -m pip install --quiet --require-hashes --only-binary=:all: -r .github/release-requirements.txt
+          python -m build --no-isolation
+          ls -l dist
+      - name: The wheel installs and runs
+        run: |
+          python -m venv "$RUNNER_TEMP/venv"
+          "$RUNNER_TEMP/venv/bin/python" -m pip install --quiet dist/*.whl
+          cd "$RUNNER_TEMP"
+          "$RUNNER_TEMP/venv/bin/mintmap" --version
+          "$RUNNER_TEMP/venv/bin/mintmap" scan "$GITHUB_WORKSPACE/examples/demo" > /dev/null
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: dist
+          path: dist/
+          if-no-files-found: error
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/project/mintmap/
+    permissions:
+      id-token: write   # the OIDC token PyPI exchanges for a short-lived upload token
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: dist
+          path: dist/
+      - uses: pypa/gh-action-pypi-publish@7245906fb61fa33a13554f9d5fb856fe61758086 # v1.14.3
