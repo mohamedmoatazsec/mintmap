@@ -211,6 +211,46 @@ class LauncherTests(unittest.TestCase):
                            cwd=tempfile.gettempdir())
         self.assertEqual(r.returncode, 128)
 
+    def _broken_checkout(self):
+        """A copy of the launchers next to a mintmap package whose modules fail to import, as on an unsupported
+        Python. An import error must exit 128 (MintMap could not run), never 1 (the new_path bit)."""
+        tmp = tempfile.mkdtemp(prefix="mintmap-broken-")
+        self.addCleanup(shutil.rmtree, tmp, ignore_errors=True)
+        os.makedirs(os.path.join(tmp, "scripts"))
+        shutil.copy(LAUNCHER, os.path.join(tmp, "scripts", "run_mintmap.py"))
+        pkg = os.path.join(PROTO, "src", "mintmap")
+        for name in ("__init__.py", "__main__.py", "_launch.py"):
+            write(tmp, f"src/mintmap/{name}", read(pkg, name))
+        for name in ("cli.py", "ci_summary.py"):
+            write(tmp, f"src/mintmap/{name}", 'raise AttributeError("simulated: this Python is not supported")\n')
+        return tmp
+
+    def test_launcher_exits_128_when_mintmap_cannot_be_imported(self):
+        tmp = self._broken_checkout()
+        for args in (["diff", "."], ["--version"], ["--summary", "findings.json", "0"]):
+            r = subprocess.run([sys.executable, "-I", os.path.join(tmp, "scripts", "run_mintmap.py"), *args],
+                               capture_output=True, text=True, timeout=60, cwd=tmp)
+            self.assertEqual(r.returncode, 128, args)
+            self.assertRegex(r.stderr, r"^mintmap: could not start on Python 3\.\d+\.\S*: AttributeError\(", args)
+
+    def test_console_entry_point_exits_128_when_mintmap_cannot_be_imported(self):
+        tmp = self._broken_checkout()
+        src = os.path.join(tmp, "src")
+        for code in ("from mintmap._launch import main; sys.exit(main())",
+                     "import runpy; runpy.run_module('mintmap', run_name='__main__')"):
+            r = subprocess.run([sys.executable, "-I", "-c", f"import sys; sys.path.insert(0, {src!r}); {code}"],
+                               capture_output=True, text=True, timeout=60, cwd=tmp)
+            self.assertEqual(r.returncode, 128, code + r.stderr)
+            self.assertIn("mintmap: could not start on Python", r.stderr)
+
+    def test_console_entry_point_runs(self):
+        src = os.path.join(PROTO, "src")
+        code = "sys.argv = ['mintmap', '--version']; from mintmap._launch import main; sys.exit(main())"
+        r = subprocess.run([sys.executable, "-I", "-c", f"import sys; sys.path.insert(0, {src!r}); {code}"],
+                           capture_output=True, text=True, timeout=60)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertRegex(r.stdout, r"^mintmap \d")
+
 
 def _action_step_script():
     """The bash script of the action's `mintmap diff` step, as written in action.yml."""

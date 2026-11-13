@@ -35,7 +35,7 @@ Changelog = "https://github.com/mohamedmoatazsec/mintmap/blob/main/CHANGELOG.md"
 Issues = "https://github.com/mohamedmoatazsec/mintmap/issues"
 
 [project.scripts]
-mintmap = "mintmap.cli:entry"
+mintmap = "mintmap._launch:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
