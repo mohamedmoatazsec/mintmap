@@ -14,6 +14,7 @@ from mm_testutil import PROTO, copy_fixture, read, scan, write
 from mintmap.ci_summary import render
 from mintmap.core.fingerprint import stable_dump, stable_unparse
 from mintmap.core.lockfile import build_lock, diff, running_python
+from mintmap.core.project import inside_regular_file
 
 CLI = os.path.join(PROTO, "tests", "_cli.py")
 LAUNCHER = os.path.join(PROTO, "scripts", "run_mintmap.py")
@@ -132,6 +133,53 @@ class FailClosedCliTests(unittest.TestCase):
         os.symlink(os.path.join(self.root, "does-not-exist.py"), os.path.join(self.root, "accounts", "extra.py"))
         r = run("diff", self.root, "--lock", self.lock)
         self.assertEqual(r.returncode, 128, r.stdout + r.stderr)
+
+    @unittest.skipUnless(hasattr(os, "symlink"), "needs symlinks")
+    def test_links_to_files_outside_the_project_are_not_read(self):
+        accepted_lock(self.root)
+        with tempfile.TemporaryDirectory() as outside:
+            secret = os.path.join(outside, "routes.py")
+            with open(secret, "w") as fh:
+                fh.write('OUTSIDE_THE_PROJECT = "x"\n')
+            os.symlink(secret, os.path.join(self.root, "accounts", "extra.py"))
+            r = run("diff", self.root, "--lock", self.lock, "--json", os.path.join(outside, "f.json"))
+            self.assertEqual(r.returncode & (128 | 32), 32, r.stdout + r.stderr)   # a parse-failure gap, no crash
+            self.assertIn("accounts/extra.py", r.stdout)
+            with open(os.path.join(outside, "f.json")) as fh:
+                self.assertNotIn("OUTSIDE_THE_PROJECT", fh.read())
+            # dependency files are not read through such a link either, and the coverage record says so
+            reqs = os.path.join(outside, "requirements.txt")
+            with open(reqs, "w") as fh:
+                fh.write("djangorestframework==3.0.0  # OUTSIDE_THE_PROJECT\n")
+            os.symlink(reqs, os.path.join(self.root, "requirements-extra.txt"))
+            report = os.path.join(outside, "report.json")
+            r = run("scan", self.root, "--json", report)
+            self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+            self.assertIn("dependency files not read", r.stdout)
+            with open(report) as fh:
+                cov = json.load(fh)["coverage"]
+            self.assertEqual([d["file"] for d in cov["dependency_files_not_read"]], ["requirements-extra.txt"])
+            self.assertEqual(cov["dependency_files"], ["requirements.txt"])     # the fixture's own file is read
+            self.assertNotIn("OUTSIDE_THE_PROJECT", json.dumps(cov))
+            self.assertIn("accounts/extra.py", [f["file"] for f in cov["parse_failures"]])
+            for link in ("accounts/extra.py", "requirements-extra.txt"):    # dangling once `outside` is gone
+                os.remove(os.path.join(self.root, link))
+        # special files (a link to /dev/zero or a FIFO) are not regular files: never opened, so no hang or OOM
+        specials = []
+        if os.path.exists("/dev/zero"):
+            zero = os.path.join(self.root, "accounts", "zero.py")
+            os.symlink("/dev/zero", zero)
+            self.assertFalse(inside_regular_file(zero, self.root))
+            specials.append("accounts/zero.py")
+        if hasattr(os, "mkfifo"):
+            os.mkfifo(os.path.join(self.root, "accounts", "pipe.py"))
+            specials.append("accounts/pipe.py")
+        if specials:
+            r = run("scan", self.root)
+            self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+            for rel in specials:
+                self.assertIn(f"gap parse_failure: {rel}", r.stdout)
+        self.assertTrue(inside_regular_file(os.path.join(self.root, "accounts", "views.py"), self.root))
 
     def test_closed_output_pipe_exits_128(self):
         self.assertEqual(run("init", self.root, "--lock", self.lock).returncode, 0)

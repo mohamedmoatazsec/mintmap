@@ -15,7 +15,7 @@ from .fingerprint import normalize, class_shell, digest, canonical_text, stable_
 from .guards import GuardAnalyzer, RT, call_key, always_exits
 from .libsource import LibrarySource
 from .lockfile import SHADOWED_STATUS
-from .project import Project, Gap
+from .project import Project, Gap, inside_regular_file, NOT_READ_REASON
 from .refactor import Inliner
 from . import review
 from .credentials import CredentialHeuristics, heuristic_api, HEURISTIC_KIND, MANAGER_ATTRS, CREATE_METHODS
@@ -248,7 +248,8 @@ class Analysis:
         self._derived = None
         self._as_view_memo: dict = {}        # id(call node) -> (class qualname, as_view Call) | None
         self._as_view_assigns: dict = {}     # function qualname -> {local name: as_view Call}
-        self.dep_files, self.dep_specs = read_dependency_specs(self.p.root, self.p.excluded_dirs)
+        self.dep_files, self.dep_specs, self.dep_files_not_read = read_dependency_specs(self.p.root,
+                                                                                        self.p.excluded_dirs)
         self.backend_factor, self.backend_classes, self.backend_unrecognized = "pending", [], []
         self.backend_config, self.backend_arg_gaps = [], []
         self.backend_factor, self.backend_classes = self._backend_factor()
@@ -3378,6 +3379,7 @@ class Analysis:
             paths_unrouted=sum(1 for p in paths if p["entry"]["kind"] == "unrouted"),
             authentication_backends_factor=self.backend_factor,
             dependency_files=self.dep_files, dependency_specs=self.dep_specs,
+            dependency_files_not_read=self.dep_files_not_read,
             gaps_by_type=by_type, gaps=[g.as_dict() for g in gap_list],
             limits=dict(chain_limit=self.chain_limit, fingerprint_depth=self.fp_depth),
             custom_credentials=self.custom_credential_summary(),
@@ -4157,10 +4159,12 @@ def version_spec_unverified(spec: str, verified: list) -> bool:
     return False
 
 
-def read_dependency_specs(root, excluded) -> tuple[list, dict]:
+def read_dependency_specs(root, excluded) -> tuple[list, dict, list]:
     """Version specifiers of catalog packages from requirements*.txt / pyproject.toml.
-    Lock files (poetry.lock, uv.lock, Pipfile.lock) are NOT read."""
-    files, specs = [], {}
+    Lock files (poetry.lock, uv.lock, Pipfile.lock) are NOT read.  A dependency file that is a link to a file
+    outside the project, or not a regular file, is not read either: it is returned in the third list (recorded in
+    coverage.dependency_files_not_read)."""
+    files, specs, not_read = [], {}, []
 
     def note(dist, spec, rel):
         pkg = DIST_TO_PACKAGE.get(dist.lower().replace("_", "-"))
@@ -4171,6 +4175,10 @@ def read_dependency_specs(root, excluded) -> tuple[list, dict]:
         for fn in sorted(filenames):
             full = os.path.join(dirpath, fn)
             rel = os.path.relpath(full, root)
+            wanted = (fn.startswith("requirements") and fn.endswith((".txt", ".in"))) or fn == "pyproject.toml"
+            if wanted and not inside_regular_file(full, root):
+                not_read.append(dict(file=rel, reason=NOT_READ_REASON))
+                continue
             if fn.startswith("requirements") and fn.endswith((".txt", ".in")):
                 files.append(rel)
                 with open(full, errors="replace") as fh:
@@ -4192,7 +4200,7 @@ def read_dependency_specs(root, excluded) -> tuple[list, dict]:
                 poetry = data.get("tool", {}).get("poetry", {}).get("dependencies", {}) or {}
                 for name, val in poetry.items():
                     note(name, val if isinstance(val, str) else str(val.get("version", "")), rel)
-    return files, specs
+    return files, specs, not_read
 
 
 def _u(n) -> str:

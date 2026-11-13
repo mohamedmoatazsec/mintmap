@@ -150,6 +150,9 @@ def summarize(report: dict) -> str:
              f"{cov.get('paths_shadowed', 0)} shadowed by an earlier route; shadowed routes: "
              f"{cov.get('routes_shadowed', 0)}, library sub-routes: {cov.get('library_subroutes_shadowed', 0)}, "
              f"possibly shadowed (conditional earlier route): {cov.get('routes_may_be_shadowed', 0)})"]
+    if cov.get("dependency_files_not_read"):
+        lines.append(f"dependency files not read (links outside the project, or not regular files): "
+                     f"{[d['file'] for d in cov['dependency_files_not_read']]}")
     lines += review_queue(report)
     lines.append("PATH DETAILS (check evidence), in review-queue order")
     order = sorted(report["paths"], key=lambda p: (review.group_key(p["review"]["group"]),
