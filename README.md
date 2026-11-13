@@ -37,7 +37,9 @@ never seen.
 
 ## Try it in 60 seconds
 
-You need Python 3.11 or newer and git. Nothing is installed, and Django is not needed: MintMap only parses code.
+You need Python 3.11 or newer and git. Check `python3 --version`: the `python3` of macOS's command-line tools
+(3.9) and of Ubuntu 22.04 (3.10) are too old; with a newer one installed, run
+`PYTHON=python3.12 bash scripts/demo.sh`. Nothing is installed, and Django is not needed: MintMap only parses code.
 
 ```bash
 git clone https://github.com/mohamedmoatazsec/mintmap
@@ -49,11 +51,15 @@ The script scans the small Django project in [`examples/demo`](examples/demo), a
 ([`bad-pr.patch`](examples/demo/bad-pr.patch)) to a temporary copy and shows `mintmap diff` failing. The image
 above is its output, and CI re-checks both on every push.
 
+On Windows, run the script in Git Bash or WSL, or follow the steps by hand below in PowerShell. `mintmap diff`
+prints its exit code on its last line; in PowerShell use `echo $LASTEXITCODE` where the steps say `echo $?`.
+
 <details>
 <summary>The same steps by hand</summary>
 
 ```bash
-python -m pip install .                 # or skip this and use: python -I scripts/run_mintmap.py <arguments>
+python3 -m venv .venv && . .venv/bin/activate   # Windows: .venv\Scripts\activate
+python -m pip install .                 # or skip both lines and use: python3 -I scripts/run_mintmap.py <arguments>
 
 mintmap scan examples/demo              # the review queue, the check evidence and the gaps
 mintmap diff examples/demo; echo $?     # 0: the code matches the reviewed lock
@@ -118,13 +124,24 @@ exit 12 (fingerprint_changed, evidence_downgraded)
 
 ## Use it on your project
 
-```bash
-pip install "git+https://github.com/mohamedmoatazsec/mintmap@v0.6.0a1"   # PyPI release pending
+Install MintMap in a virtualenv or with pipx (the system Python of current Debian, Ubuntu and Homebrew refuses
+`pip install` outside one, PEP 668). It needs Python 3.11 or newer and nothing else.
 
-mintmap scan  path/to/django/project                    # the review queue, path evidence and the gaps
-mintmap init  path/to/django/project                    # write mintmap.lock (all entries unreviewed)
-# review the entries, then record the decision (one group at a time, or --all):
-mintmap accept path/to/django/project --group kind:session --reviewer "alice" --note "initial review"
+```bash
+python3 -m venv .venv && . .venv/bin/activate     # Windows: .venv\Scripts\activate
+python -m pip install mintmap                     # or: pipx install mintmap
+# or from the release tag: python -m pip install "git+https://github.com/mohamedmoatazsec/mintmap@v0.6.0a2"
+```
+
+Then point it at the Django project (the directory that contains `manage.py`) and review what it finds:
+
+```bash
+mintmap scan   path/to/django/project            # the review queue, path evidence and the gaps
+mintmap init   path/to/django/project            # write mintmap.lock (all entries unreviewed)
+# review every group the scan lists, then record the decision: one --group at a time
+# (kind:session, kind:token, ..., settings), or all of them at once after the review:
+mintmap accept path/to/django/project --all --reviewer "alice" --note "initial review"
+mintmap diff   path/to/django/project; echo $?   # must print exit 0; 64 means some entries are still unreviewed
 git add path/to/django/project/mintmap.lock && git commit -m "Add reviewed MintMap lock"
 ```
 
@@ -164,15 +181,20 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: mohamedmoatazsec/mintmap@<full-commit-sha>   # pin to the full commit SHA of a release tag
+      # Replace the tag with the release's full commit SHA (keep the tag as a comment): a tag can be moved.
+      - uses: mohamedmoatazsec/mintmap@v0.6.0a2
         with:
           project-dir: .
 ```
 
+To pin the full commit SHA of a release tag, look it up with
+`git ls-remote https://github.com/mohamedmoatazsec/mintmap refs/tags/v0.6.0a2` and write
+`mohamedmoatazsec/mintmap@<sha> # v0.6.0a2`.
+
 The job fails on any finding (configurable with `fail-on`; exit 128, "MintMap could not run", always fails) and
 writes a summary table to the job page. The action runs MintMap from its own checkout with `python -I`, so files
-added by a pull request cannot replace it; no package is built or installed. See
-[`examples/mintmap.yml`](examples/mintmap.yml).
+added by a pull request cannot replace it; no package is built or installed. It also pauses workflow commands while
+MintMap prints text from the pull request. See [`examples/mintmap.yml`](examples/mintmap.yml).
 
 > **The check is only as strong as the review rules around `mintmap.lock`.** Without code-owner review, a pull
 > request can accept its own change. Do not run code from the pull request (installing its dependencies, running
