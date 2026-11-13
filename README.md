@@ -72,6 +72,7 @@ version CI uses.
 pip install "git+https://github.com/mohamedmoatazsec/mintmap@v0.6.0a1"   # PyPI release pending
 
 mintmap scan  path/to/django/project                    # the review queue, path evidence and the gaps
+mintmap scan  path/to/django/project --all-gaps         # show every gap in the text report (not only the first 40)
 mintmap init  path/to/django/project                    # write mintmap.lock (all entries unreviewed)
 # review the entries, then record the decision (one group at a time, or --all):
 mintmap accept path/to/django/project --group kind:session --reviewer "alice" --note "initial review"
