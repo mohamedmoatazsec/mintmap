@@ -5,6 +5,7 @@
   mintmap update <project_dir> [--lock mintmap.lock]
   mintmap diff   <project_dir> [--lock mintmap.lock] [--json findings.json]
   mintmap accept <project_dir> (ID... | --group GROUP | --all) --reviewer NAME [--note TEXT] [--lock mintmap.lock]
+  mintmap --version
 
 Project code is parsed with `ast`; it is never imported or executed.
 Exit code 128 means MintMap could not run (bad arguments, lock or catalog, or an internal error).
@@ -17,7 +18,7 @@ import os
 import sys
 
 
-from .core.analysis import Analysis
+from .core.analysis import Analysis, TOOL_VERSION
 from .core.catalog import load_catalog, DEFAULT_CATALOG, CatalogError
 from .core.lockfile import build_lock, merge_lock, diff, dump, BIT_NAMES
 from .core.project import DEFAULT_EXCLUDED_DIRS
@@ -260,6 +261,7 @@ def run_accept(args, lock_path: str) -> int:
 
 def main(argv=None) -> int:
     ap = _Parser(prog="mintmap", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--version", action="version", version=f"mintmap {TOOL_VERSION}")
     sub = ap.add_subparsers(dest="cmd", required=True, parser_class=_Parser)
     for name in ("scan", "init", "update", "diff"):
         sp = sub.add_parser(name)
