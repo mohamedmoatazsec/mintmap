@@ -31,6 +31,8 @@ Fixes:
   the analysed code (route strings, file names, gap details) on one line, with control, format and line-separator
   characters escaped, and the action pauses workflow commands (`::stop-commands::` with a random token) while
   MintMap runs. A pull request can no longer write `::error::` or `::add-mask::` lines into the step log.
+- The Action's name is `MintMap for Django`: GitHub Marketplace names must be unique, and `MintMap` is another
+  account's name. Workflows keep using `mohamedmoatazsec/mintmap@...`; only the Marketplace listing name changes.
 - `action.yml` and the workflows use actions/checkout v7.0.1 and actions/setup-python v7.1.0 (Node 24; Node 20
   is deprecated on GitHub). Self-hosted runners need Actions Runner v2.327.1 or later.
 - `scripts/demo.sh` names the Python it needs instead of printing tracebacks on Python older than 3.11.
