@@ -45,7 +45,8 @@ Added:
   steps that end with a passing `mintmap diff`. The long explanation of candidates and watched sites moved to the
   new `docs/CONCEPTS.md`.
 - `docs/ROADMAP.md`: the known blind spots as open work, linked to issues.
-- `docs/EVALUATION.md` restructured for reading. No number changed.
+- `docs/EVALUATION.md` restructured for reading. No measured result changed; the positions of the four JSON-only
+  gap units are now counted one way (75 to 231; 0.6.0a1 said 75–230).
 - `docs/DEVELOPMENT_HISTORY.md` moved to `docs/history/`.
 - Community files: `CONTRIBUTING.md`, `SECURITY.md`, `CODE_OF_CONDUCT.md`, issue and pull-request templates,
   `CITATION.cff`, Dependabot for the pinned GitHub Actions and the release build tools.

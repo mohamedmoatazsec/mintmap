@@ -3,8 +3,8 @@
 The words MintMap uses in its reports, its lock file and its findings. Every example on this page is real output
 from the demo project in [`examples/demo`](../examples/demo); run `mintmap scan examples/demo` to see the rest.
 
-**In the demo**, four routes sign someone in, and `mintmap scan` reports five paths and one candidate: the four
-logins and tokens, the pending-member value that `sign_in` writes to the session before the TOTP step (a
+**In the demo**, four routes sign someone in, and `mintmap scan` reports five paths and one candidate: the three
+logins and the API token, the pending-member value that `sign_in` writes to the session before the TOTP step (a
 hand-written session value, found by a heuristic), and, as a candidate, the `set_password` call in `finish_reset`
 (a password set from a value the code does not generate).
 

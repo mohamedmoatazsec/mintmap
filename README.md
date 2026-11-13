@@ -361,8 +361,8 @@ Xeon, 2.3 GHz), three runs each, on the then-current default branch of each proj
 | CVAT (`873008de`) | 534 | 7.2 to 7.5 s |
 
 Peak memory over all of these scans was about 170 MB. A much larger codebase takes longer: Zulip (1,769 Python
-files, one of the development projects) took about 37 s with a peak of about 400 MB, measured with Python 3.13 on a
-4-vCPU Intel Xeon at 2.1 GHz. `diff` runs the same analysis and then compares it with the lock.
+files, one of the development projects) took 37 to 42 s (six runs) with a peak of about 400 MB, measured with
+Python 3.13 on a 4-vCPU Intel Xeon at 2.1 GHz. `diff` runs the same analysis and then compares it with the lock.
 
 **Does it replace code review of authentication changes?**
 No. It points the review at the right pull requests. It misses things (see [Accuracy](#accuracy)), and the
