@@ -30,13 +30,13 @@ Code that is in no fingerprint can be weakened without a finding.
 |---|---|
 | Hooks named in settings and loaded by a project helper (`load_func(settings.X)`), and adapter classes re-exported from a package `__init__` | [#4](https://github.com/mohamedmoatazsec/mintmap/issues/4) |
 | A settings module that star-imports its base module through a source-root alias: `INSTALLED_APPS`, `MIDDLEWARE`, `AUTHENTICATION_BACKENDS` and `REST_FRAMEWORK` are not read | [#3](https://github.com/mohamedmoatazsec/mintmap/issues/3) |
-| No option to choose the settings module: MintMap follows `DJANGO_SETTINGS_MODULE` in `manage.py` | [#7](https://github.com/mohamedmoatazsec/mintmap/issues/7) |
+| No option to choose one settings module: MintMap analyses the modules that `DJANGO_SETTINGS_MODULE` literals in the code name and, as alternatives, every other leaf settings module except test settings | [#7](https://github.com/mohamedmoatazsec/mintmap/issues/7) |
 
 ## 3. False alarms
 
 | Problem | Issue |
 |---|---|
-| An extracted helper named `_check_*` reads as a new unrecognised check | [#9](https://github.com/mohamedmoatazsec/mintmap/issues/9) |
+| An extracted helper named like a check (`_check_*`) reads as a new unrecognised check, and a helper that returns a recognised check's result is not normalised | [#9](https://github.com/mohamedmoatazsec/mintmap/issues/9) |
 | A settings expression rewritten without changing its value | [#10](https://github.com/mohamedmoatazsec/mintmap/issues/10) |
 | A value first held in a new local variable; a hook's local import moved to module level | not filed yet |
 | Moving code to another module or class changes the fingerprint | not filed yet |
@@ -72,7 +72,8 @@ No design exists for these yet. Ideas and examples are welcome in an issue.
 
 ## 7. Distribution
 
-- First release on PyPI (the release workflow is in place; see [CONTRIBUTING.md](../CONTRIBUTING.md#releasing)).
+- The first PyPI release, 0.6.0a2 (the release workflow is in place; see
+  [CONTRIBUTING.md](../CONTRIBUTING.md#releasing)).
 - Listing the action on GitHub Marketplace.
 
 ## How to help

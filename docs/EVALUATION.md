@@ -10,14 +10,15 @@ Label Studio, Tandoor):
 | Question | Result |
 |---|---|
 | Credential paths found and linked to the right route | 28 of 66 (42%) |
-| Credential paths **missed with no warning** | **8 of 66 (12%)** |
+| Found only as an unlinked mint, a candidate or a named gap (4 of the 11 gaps only in `--json`) | 30 of 66 (45%) |
+| Credential paths **missed with no warning** (scoring judgement calls: 4 to 12) | **8 of 66 (12%)** |
 | Reported paths that are not real credential paths | 25 of 58 (43%) |
 | Lock entries to review on day one / of which false alarms | 88 / 33 |
 | Harmful code changes caught by `diff` | 42 of 65 (65%) |
 | Harmless changes that raised a finding | 7 of 22 |
 
-On an earlier, harder set of unseen projects (InvenTree, Weblate, pretix), the previous version missed 30% of
-credential paths with no warning. MintMap is a review aid, not a guarantee.
+On an earlier, harder set of unseen projects (InvenTree, Weblate, pretix), the previous version (0.5.0a1) missed
+30% of credential paths with no warning. MintMap is a review aid, not a guarantee.
 
 **On this page:** [How it was measured](#how-it-was-measured) · [Method](#method) ·
 [Round 4](#round-4-v6-on-projects-nobody-looked-at-with-v5-as-a-control) ·
@@ -87,13 +88,14 @@ Notes on these numbers:
   whether an invitation stored in the session is a credential, and whether a match through a false-alarm path
   counts.
 - **`--library-path`** (wheels at the pinned versions) changed no verdict on any project.
-- **Settings module.** For CVAT the tool analysed `cvat.settings.development`, the module `manage.py` names.
-  MintMap has no option to choose a settings module. A verifier re-ran with production-only settings, and no unit
-  changed.
+- **Settings module.** For CVAT the tool analysed `cvat.settings.development` (the module `manage.py` names) and,
+  as an alternative, `cvat.settings.email_settings`, which star-imports `cvat.settings.production`. MintMap has no
+  option to choose one settings module. A verifier re-ran with production-only settings, and no unit changed.
 
 "Gap" is weaker than it sounds for some units. 4 of the 11 are visible only in `--json` output: CVAT's
 password-reset token and password change, and Label Studio's personal access token create and rotate (gaps at
-positions 75–230; the text report lists the first 40). Label Studio's personal access tokens, its main API
+positions 75 to 231 of the gap list: CVAT 75, 77 and 84 of 87, Label Studio 230 and 231 of 259; the text report
+lists the first 40). Label Studio's personal access tokens, its main API
 credential, do not appear in the review queue at all.
 
 **Check evidence.** On the 42 matched units the verifiers judged, the recorded check evidence agreed with the truth
@@ -143,7 +145,8 @@ The harmless changes that raised a finding were all realistic refactors:
    field in an admin form). MintMap links admin registrations only for models whose `save()` is a catalogued mint.
 3. A settings module that star-imports its base module through a source-root alias (Label Studio). The star import
    is not resolved, so `INSTALLED_APPS`, `MIDDLEWARE`, `AUTHENTICATION_BACKENDS` and `REST_FRAMEWORK` are never
-   read, and the only trace is one generic gap.
+   read, and the scan reports only the unresolved import (`settings_star_import_unresolved`) and `missing_setting`
+   gaps, not which settings the unread base module holds.
 4. Hooks named in settings and loaded by a project helper (`load_func(settings.X)`). Also an adapter class
    re-exported from a package `__init__`, which MintMap resolves to the submodule.
 5. DRF routers extended at run time (one global gap). Tokens created by `ModelSerializer.create()` through
