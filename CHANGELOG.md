@@ -19,12 +19,14 @@ Fixes:
   `mintmap` command, `python -m mintmap` and the action's launcher now print
   `mintmap: could not start on Python X: ...` and exit 128; on Python older than 3.11 they say that 3.11 or newer
   is needed.
-- **Security: files outside the project are not read.** A symbolic link to a file outside the project directory,
-  and a special file (a FIFO, a device), was read: a pull request could make MintMap print another file's strings
-  in the CI log, run it out of memory or hang it. Such a Python file is now a parse failure with a `parse_failure`
-  gap, so `diff` reports `coverage_regression`; such a `requirements*.txt` or `pyproject.toml` is listed in
-  `coverage.dependency_files_not_read` and in the `scan` report. A dangling link still exits 128. No evaluation
-  project contains such a link, so the published numbers still describe this code.
+- **Security: links that leave the project and special files are not read.** A symbolic link to a file outside the
+  project directory, and a special file (a FIFO, a device), was read: a pull request could make MintMap print another
+  file's strings in the CI log, run it out of memory or hang it. Such a Python file is now a parse failure with a
+  `parse_failure` gap, so `diff` reports `coverage_regression`; such a `requirements*.txt` or `pyproject.toml` is
+  listed in `coverage.dependency_files_not_read` and in the `scan` report. A lock file (`mintmap.lock` or `--lock`)
+  that is a symbolic link or not a regular file is neither read nor written: `diff`, `update`, `init` and `accept`
+  exit 128. A dangling link still exits 128. No evaluation project contains such a link, so the published numbers
+  still describe this code.
 - **Security: no workflow commands from the pull request.** `scan`, `diff`, `update` and `accept` print text from
   the analysed code (route strings, file names, gap details) on one line, with control, format and line-separator
   characters escaped, and the action pauses workflow commands (`::stop-commands::` with a random token) while

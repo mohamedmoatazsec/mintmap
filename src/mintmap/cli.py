@@ -134,6 +134,16 @@ def _one_line(text: object) -> str:
     return "".join(ch if ch.isprintable() else ch.encode("unicode_escape").decode("ascii") for ch in str(text))
 
 
+def _lock_file_problem(lock_path: str):
+    """Why MintMap must not read or write the lock: a symbolic link (a pull request can point it at a file outside the
+    project, SECURITY.md) or something that is not a regular file (a FIFO blocks, /dev/zero never ends)."""
+    if os.path.islink(lock_path):
+        return "is a symbolic link"
+    if os.path.exists(lock_path) and not os.path.isfile(lock_path):
+        return "is not a regular file"
+    return None
+
+
 def summarize(report: dict) -> str:
     cov = report["coverage"]
     lines = [f"MintMap {report['tool']['version']}  project={report['project']}",
@@ -314,6 +324,11 @@ def main(argv=None) -> int:
         print(f"mintmap: not a directory: {args.project_dir}", file=sys.stderr)
         return EXIT_ERROR
     lock_path = getattr(args, "lock", None) or os.path.join(args.project_dir, "mintmap.lock")
+    why = None if args.cmd == "scan" else _lock_file_problem(lock_path)
+    if why:
+        print(f"mintmap: {_one_line(lock_path)} {why}; MintMap reads and writes only a regular lock file",
+              file=sys.stderr)
+        return EXIT_ERROR
     if args.cmd == "accept":
         return run_accept(args, lock_path)
     try:

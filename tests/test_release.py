@@ -181,6 +181,34 @@ class FailClosedCliTests(unittest.TestCase):
                 self.assertIn(f"gap parse_failure: {rel}", r.stdout)
         self.assertTrue(inside_regular_file(os.path.join(self.root, "accounts", "views.py"), self.root))
 
+    @unittest.skipUnless(hasattr(os, "symlink"), "needs symlinks")
+    def test_lock_that_is_a_link_or_not_a_regular_file_is_neither_read_nor_written(self):
+        with tempfile.TemporaryDirectory() as outside:
+            target = os.path.join(outside, "other.lock")
+            accepted_lock(self.root)
+            shutil.move(self.lock, target)
+            with open(target) as fh:
+                before = fh.read()
+            os.symlink(target, self.lock)
+            for cmd in (("diff",), ("update",), ("init", "--force"), ("accept", "--all", "--reviewer", "x")):
+                r = run(cmd[0], self.root, *cmd[1:])
+                self.assertEqual(r.returncode, 128, (cmd, r.stdout, r.stderr))
+                self.assertIn("is a symbolic link", r.stderr)
+            r = run("diff", self.root, "--lock", self.lock)                 # an explicit --lock is checked too
+            self.assertEqual(r.returncode, 128, r.stderr)
+            with open(target) as fh:
+                self.assertEqual(fh.read(), before)
+            os.remove(self.lock)
+            os.symlink(os.path.join(outside, "new.lock"), self.lock)      # dangling: init must not create it
+            self.assertEqual(run("init", self.root).returncode, 128)
+            self.assertFalse(os.path.exists(os.path.join(outside, "new.lock")))
+            os.remove(self.lock)
+        if hasattr(os, "mkfifo"):
+            os.mkfifo(self.lock)
+            r = run("diff", self.root)          # open() would block on the FIFO without the check
+            self.assertEqual(r.returncode, 128, r.stderr)
+            self.assertIn("is not a regular file", r.stderr)
+
     def test_closed_output_pipe_exits_128(self):
         self.assertEqual(run("init", self.root, "--lock", self.lock).returncode, 0)
         p = subprocess.Popen([sys.executable, "-I", CLI, "diff", self.root, "--lock", self.lock],
