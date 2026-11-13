@@ -1,4 +1,4 @@
-"""v6: tests for the generalisation round (root causes of the round-3 fresh evaluation, see docs/DEVELOPMENT_HISTORY.md).
+"""v6: tests for the generalisation round (root causes of the round-3 fresh evaluation, see docs/history/DEVELOPMENT_HISTORY.md).
 
 Every test writes a small synthetic project into a temporary directory (helpers from test_v5.py).  The code is
 written for these tests; no development-project code is copied.

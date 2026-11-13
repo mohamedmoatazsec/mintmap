@@ -1,0 +1,37 @@
+name: Please support library X
+description: Ask for an authentication library to be added to the catalog, or offer to add it.
+labels: ["catalog"]
+body:
+  - type: input
+    id: library
+    attributes:
+      label: Library and version
+      description: The PyPI name and the release you use.
+      placeholder: django-auth-ldap 5.2.0
+    validations:
+      required: true
+  - type: textarea
+    id: usage
+    attributes:
+      label: How your project uses it
+      description: Settings, URL includes and the calls your code makes into the library. A short snippet written for this report.
+      render: python
+    validations:
+      required: true
+  - type: textarea
+    id: mints
+    attributes:
+      label: What it creates and what it checks
+      description: If you know, the functions that create a session, token or other credential, and the functions that verify one. File names and line numbers in the library source help a lot.
+  - type: textarea
+    id: today
+    attributes:
+      label: What MintMap reports today
+      description: Does the library show up as a gap, as a candidate (`candidates:auth_library_call`), or not at all?
+      render: text
+  - type: checkboxes
+    id: help
+    attributes:
+      label: Can you help?
+      options:
+        - label: I can write the catalog entries, with source citations (see CONTRIBUTING.md).

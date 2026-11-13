@@ -1,12 +1,42 @@
 # Evaluation
 
+How often MintMap misses things, how much noise it makes, and how these numbers were measured.
+
+## At a glance
+
+Release 0.6.0a1, frozen and then run on three Django projects nobody had looked at while it was built (CVAT,
+Label Studio, Tandoor):
+
+| Question | Result |
+|---|---|
+| Credential paths found and linked to the right route | 28 of 66 (42%) |
+| Found only as an unlinked mint, a candidate or a named gap (4 of the 11 gaps only in `--json`) | 30 of 66 (45%) |
+| Credential paths **missed with no warning** (scoring judgement calls: 4 to 12) | **8 of 66 (12%)** |
+| Reported paths that are not real credential paths | 25 of 58 (43%) |
+| Lock entries to review on day one / of which false alarms | 88 / 33 |
+| Harmful code changes caught by `diff` | 42 of 65 (65%) |
+| Harmless changes that raised a finding | 7 of 22 |
+
+On an earlier, harder set of unseen projects (InvenTree, Weblate, pretix), the previous version (0.5.0a1) missed
+30% of credential paths with no warning. MintMap is a review aid, not a guarantee.
+
+**On this page:** [How it was measured](#how-it-was-measured) · [Method](#method) ·
+[Round 4](#round-4-v6-on-projects-nobody-looked-at-with-v5-as-a-control) ·
+[Round 3](#round-3-v5-on-inventree-weblate-pretix) · [Round 2 → 3](#round-2--3) ·
+[What this means for you](#what-this-means-for-you)
+
+## How it was measured
+
 MintMap was developed and measured on eleven open-source Django projects in four rounds. In every round after
 the first, the tool was frozen first and then measured on projects nobody had looked at while building that
-version. Ground truth for each project is an inventory of every way to obtain a session or credential. A separate
-AI agent compiled it by reading the code, without ever seeing the tool or its output. The inventories were not
-written by humans, they contain errors, and verifiers corrected some of them. Every held-out number below was
-re-checked by an adversarial AI verifier that re-ran the tool and tried to refute the scoring. The "dev set"
-numbers come from an automatic regression harness and were not re-checked by a verifier.
+version.
+
+- **Ground truth** for each project is an inventory of every way to obtain a session or credential. A separate AI
+  agent compiled it by reading the code, without ever seeing the tool or its output.
+- **The inventories were not written by humans.** They contain errors, and verifiers corrected some of them.
+- **Every held-out number below was re-checked** by an adversarial AI verifier that re-ran the tool and tried to
+  refute the scoring.
+- **The "dev set" numbers** come from an automatic regression harness and were not re-checked by a verifier.
 
 | round | tool | measured on | role |
 |---|---|---|---|
@@ -15,8 +45,13 @@ numbers come from an automatic regression harness and were not re-checked by a v
 | 3 | v5 frozen (released as 0.5.0a1) | InvenTree, Weblate, pretix | held-out, then used to develop v6 |
 | 4 | **v6 frozen (released as 0.6.0a1)**, with v5 as a control | **CVAT, Label Studio, Tandoor** | **held-out** |
 
-Release 0.6.0a1 is the frozen v6 tree (tag `v0.6.0.dev0-frozen`, commit `fed05c8`) plus documentation and the version string. No analysis
-code changed after freezing.
+Release 0.6.0a1 is the frozen v6 tree (tag `v0.6.0.dev0-frozen`, commit `fed05c8`) plus documentation and the version
+string. No analysis code changed after freezing. Release 0.6.0a2 has the same analysis and catalog, plus three fixes
+that do not change results on these projects: it runs on Python 3.14, it no longer reads symbolic links that leave
+the project or special files (nor a lock file that is a link), and it escapes control characters in its text output.
+Its `scan --json` reports of CVAT, Label Studio, Tandoor and Healthchecks are identical to those of the frozen v6
+tree on Python 3.11 and 3.13 (apart from the version string and a new, empty `coverage.dependency_files_not_read`
+list), and its reports on Python 3.14, where only 0.6.0a2 runs, are identical to the frozen tree's on 3.13.
 
 ## Method
 
@@ -52,15 +87,20 @@ v5 on the same units: 26 exact, 18 mint only, 11 gap, 11 silent. No unit was fou
 By class (v6 / v5 silent): full sessions 0 of 28 / 0, tokens 4 of 26 / 7, precursors 4 of 12 / 4. v6 is better
 than v5 on 3 units and worse on none.
 
-Scoring judgement calls move the v6 silent count between 4 and 12. They are: how specific a gap must be, whether
-an invitation stored in the session is a credential, and whether a match through a false-alarm path counts.
-`--library-path` (wheels at the pinned versions) changed no verdict on any project. For CVAT the tool analysed
-`cvat.settings.development`, the module `manage.py` names. MintMap has no option to choose a settings module. A
-verifier re-ran with production-only settings, and no unit changed.
+Notes on these numbers:
+
+- **Scoring judgement calls** move the v6 silent count between 4 and 12. They are: how specific a gap must be,
+  whether an invitation stored in the session is a credential, and whether a match through a false-alarm path
+  counts.
+- **`--library-path`** (wheels at the pinned versions) changed no verdict on any project.
+- **Settings module.** For CVAT the tool analysed `cvat.settings.development` (the module `manage.py` names) and,
+  as an alternative, `cvat.settings.email_settings`, which star-imports `cvat.settings.production`. MintMap has no
+  option to choose one settings module. A verifier re-ran with production-only settings, and no unit changed.
 
 "Gap" is weaker than it sounds for some units. 4 of the 11 are visible only in `--json` output: CVAT's
 password-reset token and password change, and Label Studio's personal access token create and rotate (gaps at
-positions 75–230; the text report lists the first 40). Label Studio's personal access tokens, its main API
+positions 75 to 231 of the gap list: CVAT 75, 77 and 84 of 87, Label Studio 230 and 231 of 259; the text report
+lists the first 40). Label Studio's personal access tokens, its main API
 credential, do not appear in the review queue at all.
 
 **Check evidence.** On the 42 matched units the verifiers judged, the recorded check evidence agreed with the truth
@@ -93,8 +133,9 @@ The verifiers also judged the review queue's ranking. It often points the wrong 
 | all mutations, incl. extras and verifier probes | 42 / 65 (65%) | 36 / 65 (55%) | 7 / 22 | 8 / 22 |
 
 23 of 65 harmful changes passed v6 with exit 0. Of v6's 42 catches, 9 name only the changed settings group, a
-candidate group, a gap or a different path, not the login path whose behaviour changed. The
-harmless changes that raised a finding were all realistic refactors:
+candidate group, a gap or a different path, not the login path whose behaviour changed.
+
+The harmless changes that raised a finding were all realistic refactors:
 - four extracted helper functions or methods, one of them named `_check_*`, which MintMap reads as a new
   unrecognised check;
 - a value first held in a new local variable;
@@ -109,7 +150,8 @@ harmless changes that raised a finding were all realistic refactors:
    field in an admin form). MintMap links admin registrations only for models whose `save()` is a catalogued mint.
 3. A settings module that star-imports its base module through a source-root alias (Label Studio). The star import
    is not resolved, so `INSTALLED_APPS`, `MIDDLEWARE`, `AUTHENTICATION_BACKENDS` and `REST_FRAMEWORK` are never
-   read, and the only trace is one generic gap.
+   read, and the scan reports only the unresolved import (`settings_star_import_unresolved`) and `missing_setting`
+   gaps, not which settings the unread base module holds.
 4. Hooks named in settings and loaded by a project helper (`load_func(settings.X)`). Also an adapter class
    re-exported from a package `__init__`, which MintMap resolves to the submodule.
 5. DRF routers extended at run time (one global gap). Tokens created by `ModelSerializer.create()` through
@@ -133,6 +175,8 @@ rounds.
 
 ## Round 3: v5 on InvenTree, Weblate, pretix
 
+This is the earlier held-out round. Its projects were then used to develop v6, so they are development data now.
+
 | project | units | exact | mint only | visible as gap | **silent** |
 |---|---|---|---|---|---|
 | InvenTree | 44 | 9 | 3 | 27 | **5 (11%)** |
@@ -140,20 +184,29 @@ rounds.
 | pretix | 69 | 33 | 7 | 1 | **28 (41%)** |
 | **total** | **149** | **56 (38%)** | 17 | 31 | **45 (30%)** |
 
-By class: full sessions 17 of 51 silent, tokens 12 of 54, precursors 16 of 44. False alarms: 127 of 230 reported
-paths (55%). On day one a reviewer looks at 260 lock entries, and 130 of them are not real credential paths. 24 of
-the 31 gap units (InvenTree's allauth headless API) are visible only through global gaps in `--json` output.
-Check evidence agreed with the inventory on 5 of 60 matched units, was weaker on 43 and wrong on 12.
+- **By class:** full sessions 17 of 51 silent, tokens 12 of 54, precursors 16 of 44.
+- **False alarms:** 127 of 230 reported paths (55%). On day one a reviewer looks at 260 lock entries, and 130 of
+  them are not real credential paths.
+- **Gaps:** 24 of the 31 gap units (InvenTree's allauth headless API) are visible only through global gaps in
+  `--json` output.
+- **Check evidence** agreed with the inventory on 5 of 60 matched units, was weaker on 43 and wrong on 12.
 
 | set | harmful changes caught | missed (exit 0) | harmless changes flagged |
 |---|---|---|---|
 | 9 required categories × 3 projects | 14 / 18 | 4 / 18 | 0 / 9 |
 | all mutations, incl. extras and verifier probes | 40 / 58 | 18 / 58 (31%) | 4 / 20 |
 
-The root causes found in round 3 were the input of v6. They were hand-rolled sessions with run-time keys,
-credentials created through related managers or `CreateView`, library flows called directly, settings computed by
-calls, an admin site swapped in a function, and library URL builders. On the round-3 projects (now development
-data) v6 misses 4 of 149 units silently. That is the dev-set number above, not a held-out result.
+The root causes found in round 3 were the input of v6:
+
+- hand-rolled sessions with run-time keys
+- credentials created through related managers or `CreateView`
+- library flows called directly
+- settings computed by calls
+- an admin site swapped in a function
+- library URL builders
+
+On the round-3 projects (now development data) v6 misses 4 of 149 units silently. That is the dev-set number
+above, not a held-out result.
 
 ## Round 2 → 3
 
@@ -171,12 +224,15 @@ its held-out projects, and v5 missed 30% on its own.
 - **The inventory is not complete.** On the latest unseen projects about 1 in 8 credential paths was missing with
   no warning, and on harder projects (round 3) it was closer to 1 in 3. Tokens and precursors (a registration token
   issued through a library setting, API keys created in the admin, invitation tokens) are missed far more often
-  than login sessions. Read the gap list (the
-  text report shows the first 40 gaps; `--json` has all of them), and add your own review of custom auth code.
+  than login sessions. Read the gap list (the text report shows the first 40 gaps; `--json` has all of them), and
+  add your own review of custom auth code.
 - **Expect noise.** About 4 in 10 reported paths were false alarms. The ranking of the review queue is not reliable
   yet.
 - **`diff` catches most, not all, harmful changes to the code it fingerprints.** On unseen projects about a third of
   harmful changes passed. Checks reached through settings-named serializers, library-called hooks and admin code
   are the usual reason.
-- Raw data, scoring files and verifier reports for every round are kept with the development history. Ask in an
-  issue if you want them.
+- **Raw data.** Scoring files and verifier reports for every round are kept with the development history. Ask in
+  an issue if you want them.
+
+For the vocabulary used here (path, candidate, watched site, gap), see [CONCEPTS.md](CONCEPTS.md). The open
+problems behind these numbers are tracked in [ROADMAP.md](ROADMAP.md).

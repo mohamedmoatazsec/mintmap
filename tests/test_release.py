@@ -14,6 +14,7 @@ from mm_testutil import PROTO, copy_fixture, read, scan, write
 from mintmap.ci_summary import render
 from mintmap.core.fingerprint import stable_dump, stable_unparse
 from mintmap.core.lockfile import build_lock, diff, running_python
+from mintmap.core.project import inside_regular_file
 
 CLI = os.path.join(PROTO, "tests", "_cli.py")
 LAUNCHER = os.path.join(PROTO, "scripts", "run_mintmap.py")
@@ -133,6 +134,81 @@ class FailClosedCliTests(unittest.TestCase):
         r = run("diff", self.root, "--lock", self.lock)
         self.assertEqual(r.returncode, 128, r.stdout + r.stderr)
 
+    @unittest.skipUnless(hasattr(os, "symlink"), "needs symlinks")
+    def test_links_to_files_outside_the_project_are_not_read(self):
+        accepted_lock(self.root)
+        with tempfile.TemporaryDirectory() as outside:
+            secret = os.path.join(outside, "routes.py")
+            with open(secret, "w") as fh:
+                fh.write('OUTSIDE_THE_PROJECT = "x"\n')
+            os.symlink(secret, os.path.join(self.root, "accounts", "extra.py"))
+            r = run("diff", self.root, "--lock", self.lock, "--json", os.path.join(outside, "f.json"))
+            self.assertEqual(r.returncode & (128 | 32), 32, r.stdout + r.stderr)   # a parse-failure gap, no crash
+            self.assertIn("accounts/extra.py", r.stdout)
+            with open(os.path.join(outside, "f.json")) as fh:
+                self.assertNotIn("OUTSIDE_THE_PROJECT", fh.read())
+            # dependency files are not read through such a link either, and the coverage record says so
+            reqs = os.path.join(outside, "requirements.txt")
+            with open(reqs, "w") as fh:
+                fh.write("djangorestframework==3.0.0  # OUTSIDE_THE_PROJECT\n")
+            os.symlink(reqs, os.path.join(self.root, "requirements-extra.txt"))
+            report = os.path.join(outside, "report.json")
+            r = run("scan", self.root, "--json", report)
+            self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+            self.assertIn("dependency files not read", r.stdout)
+            with open(report) as fh:
+                cov = json.load(fh)["coverage"]
+            self.assertEqual([d["file"] for d in cov["dependency_files_not_read"]], ["requirements-extra.txt"])
+            self.assertEqual(cov["dependency_files"], ["requirements.txt"])     # the fixture's own file is read
+            self.assertNotIn("OUTSIDE_THE_PROJECT", json.dumps(cov))
+            self.assertIn("accounts/extra.py", [f["file"] for f in cov["parse_failures"]])
+            for link in ("accounts/extra.py", "requirements-extra.txt"):    # dangling once `outside` is gone
+                os.remove(os.path.join(self.root, link))
+        # special files (a link to /dev/zero or a FIFO) are not regular files: never opened, so no hang or OOM
+        specials = []
+        if os.path.exists("/dev/zero"):
+            zero = os.path.join(self.root, "accounts", "zero.py")
+            os.symlink("/dev/zero", zero)
+            self.assertFalse(inside_regular_file(zero, self.root))
+            specials.append("accounts/zero.py")
+        if hasattr(os, "mkfifo"):
+            os.mkfifo(os.path.join(self.root, "accounts", "pipe.py"))
+            specials.append("accounts/pipe.py")
+        if specials:
+            r = run("scan", self.root)
+            self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+            for rel in specials:
+                self.assertIn(f"gap parse_failure: {rel}", r.stdout)
+        self.assertTrue(inside_regular_file(os.path.join(self.root, "accounts", "views.py"), self.root))
+
+    @unittest.skipUnless(hasattr(os, "symlink"), "needs symlinks")
+    def test_lock_that_is_a_link_or_not_a_regular_file_is_neither_read_nor_written(self):
+        with tempfile.TemporaryDirectory() as outside:
+            target = os.path.join(outside, "other.lock")
+            accepted_lock(self.root)
+            shutil.move(self.lock, target)
+            with open(target) as fh:
+                before = fh.read()
+            os.symlink(target, self.lock)
+            for cmd in (("diff",), ("update",), ("init", "--force"), ("accept", "--all", "--reviewer", "x")):
+                r = run(cmd[0], self.root, *cmd[1:])
+                self.assertEqual(r.returncode, 128, (cmd, r.stdout, r.stderr))
+                self.assertIn("is a symbolic link", r.stderr)
+            r = run("diff", self.root, "--lock", self.lock)                 # an explicit --lock is checked too
+            self.assertEqual(r.returncode, 128, r.stderr)
+            with open(target) as fh:
+                self.assertEqual(fh.read(), before)
+            os.remove(self.lock)
+            os.symlink(os.path.join(outside, "new.lock"), self.lock)      # dangling: init must not create it
+            self.assertEqual(run("init", self.root).returncode, 128)
+            self.assertFalse(os.path.exists(os.path.join(outside, "new.lock")))
+            os.remove(self.lock)
+        if hasattr(os, "mkfifo"):
+            os.mkfifo(self.lock)
+            r = run("diff", self.root)          # open() would block on the FIFO without the check
+            self.assertEqual(r.returncode, 128, r.stderr)
+            self.assertIn("is not a regular file", r.stderr)
+
     def test_closed_output_pipe_exits_128(self):
         self.assertEqual(run("init", self.root, "--lock", self.lock).returncode, 0)
         p = subprocess.Popen([sys.executable, "-I", CLI, "diff", self.root, "--lock", self.lock],
@@ -211,6 +287,46 @@ class LauncherTests(unittest.TestCase):
                            cwd=tempfile.gettempdir())
         self.assertEqual(r.returncode, 128)
 
+    def _broken_checkout(self):
+        """A copy of the launchers next to a mintmap package whose modules fail to import, as on an unsupported
+        Python. An import error must exit 128 (MintMap could not run), never 1 (the new_path bit)."""
+        tmp = tempfile.mkdtemp(prefix="mintmap-broken-")
+        self.addCleanup(shutil.rmtree, tmp, ignore_errors=True)
+        os.makedirs(os.path.join(tmp, "scripts"))
+        shutil.copy(LAUNCHER, os.path.join(tmp, "scripts", "run_mintmap.py"))
+        pkg = os.path.join(PROTO, "src", "mintmap")
+        for name in ("__init__.py", "__main__.py", "_launch.py"):
+            write(tmp, f"src/mintmap/{name}", read(pkg, name))
+        for name in ("cli.py", "ci_summary.py"):
+            write(tmp, f"src/mintmap/{name}", 'raise AttributeError("simulated: this Python is not supported")\n')
+        return tmp
+
+    def test_launcher_exits_128_when_mintmap_cannot_be_imported(self):
+        tmp = self._broken_checkout()
+        for args in (["diff", "."], ["--version"], ["--summary", "findings.json", "0"]):
+            r = subprocess.run([sys.executable, "-I", os.path.join(tmp, "scripts", "run_mintmap.py"), *args],
+                               capture_output=True, text=True, timeout=60, cwd=tmp)
+            self.assertEqual(r.returncode, 128, args)
+            self.assertRegex(r.stderr, r"^mintmap: could not start on Python 3\.\d+\.\S*: AttributeError\(", args)
+
+    def test_console_entry_point_exits_128_when_mintmap_cannot_be_imported(self):
+        tmp = self._broken_checkout()
+        src = os.path.join(tmp, "src")
+        for code in ("from mintmap._launch import main; sys.exit(main())",
+                     "import runpy; runpy.run_module('mintmap', run_name='__main__')"):
+            r = subprocess.run([sys.executable, "-I", "-c", f"import sys; sys.path.insert(0, {src!r}); {code}"],
+                               capture_output=True, text=True, timeout=60, cwd=tmp)
+            self.assertEqual(r.returncode, 128, code + r.stderr)
+            self.assertIn("mintmap: could not start on Python", r.stderr)
+
+    def test_console_entry_point_runs(self):
+        src = os.path.join(PROTO, "src")
+        code = "sys.argv = ['mintmap', '--version']; from mintmap._launch import main; sys.exit(main())"
+        r = subprocess.run([sys.executable, "-I", "-c", f"import sys; sys.path.insert(0, {src!r}); {code}"],
+                           capture_output=True, text=True, timeout=60)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertRegex(r.stdout, r"^mintmap \d")
+
 
 def _action_step_script():
     """The bash script of the action's `mintmap diff` step, as written in action.yml."""
@@ -261,6 +377,14 @@ class ActionTests(unittest.TestCase):
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
         self.assertIn("exit-code=0", out)
         self.assertIn("No changes", summary)
+        # workflow commands are paused while MintMap prints text from the pull request, with a random token
+        lines = r.stdout.splitlines()
+        stop = [ln for ln in lines if re.fullmatch(r"::stop-commands::[0-9a-f]{32}", ln)]
+        self.assertEqual(len(stop), 1, r.stdout)
+        token = stop[0].rsplit("::", 1)[1]
+        self.assertIn(f"::{token}::", lines)
+        self.assertLess(lines.index(stop[0]), lines.index("exit 0 (ok)"))
+        self.assertLess(lines.index("exit 0 (ok)"), lines.index(f"::{token}::"))
         r, out, _ = step(root, fail_on="08")              # decimal 8, not an octal error that skips the check
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
         self.assertNotIn("value too great", r.stderr)
@@ -291,6 +415,30 @@ class ActionTests(unittest.TestCase):
         self.assertIn("could not run", r.stdout)
         self.assertIn("mintmap init <project_dir>", summary)
         self.assertNotIn("fingerprint_changed", summary)  # a fresh findings file per run, not the previous one
+
+
+class OutputTests(unittest.TestCase):
+    def test_text_from_the_project_cannot_start_an_output_line(self):
+        # A route string (any text from the pull request) must not start a line that a CI runner reads as a
+        # workflow command such as ::error:: or ::add-mask::.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = os.path.join(tmp, "demo")
+            shutil.copytree(os.path.join(PROTO, "examples", "demo"), root)
+            src = read(root, "members/urls.py")
+            evil = '    path("x/\\n::error title=MintMap::no changes\\r\\n", views.sign_in, name="x"),\n'
+            write(root, "members/urls.py", src.replace("urlpatterns = [\n", "urlpatterns = [\n" + evil, 1))
+            r = run("diff", root)
+            self.assertEqual(r.returncode & 1, 1, r.stdout + r.stderr)
+            lines = (r.stdout + r.stderr).splitlines()
+            self.assertFalse([ln for ln in lines if ln.lstrip().startswith("::")], r.stdout)
+            self.assertIn("\\n::error", r.stdout)
+            # the same for the text report of `scan` (route strings, entry ids, gap details, reasons)
+            r = run("scan", root)
+            self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+            lines = (r.stdout + r.stderr).splitlines()
+            self.assertFalse([ln for ln in lines if ln.lstrip().startswith("::")], r.stdout)
+            self.assertIn("\\n::error", r.stdout)
+            self.assertIn("\\r\\n", r.stdout)
 
 
 if __name__ == "__main__":

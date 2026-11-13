@@ -1,0 +1,22 @@
+cff-version: 1.2.0
+message: "If you use MintMap in research or a report, please cite it as below."
+title: "MintMap: a reviewed map of the code paths that create a login session or credential in a Django app, enforced in CI"
+type: software
+authors:
+  - name: "mohamedmoatazsec"
+    website: "https://github.com/mohamedmoatazsec"
+version: "0.6.0a2"
+license: Apache-2.0
+repository-code: "https://github.com/mohamedmoatazsec/mintmap"
+url: "https://github.com/mohamedmoatazsec/mintmap"
+abstract: >-
+  MintMap is a static-analysis tool for Django projects. It looks for the code paths that create a login session
+  or credential, stores the ones it finds in a human-reviewed lock file, and fails continuous integration when
+  that set, or the code on it, changes. Its miss rate and false-alarm rate were measured on projects it was not
+  developed against and are published with the tool.
+keywords:
+  - django
+  - security
+  - authentication
+  - static analysis
+  - continuous integration

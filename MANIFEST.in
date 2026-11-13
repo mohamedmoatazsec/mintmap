@@ -1,0 +1,6 @@
+# The sdist carries what the test suite needs, so that it can be tested after unpacking:
+#   python -I -m unittest discover -s tests -t tests
+graft tests
+graft examples/demo
+include action.yml CHANGELOG.md CITATION.cff scripts/run_mintmap.py scripts/pypi_readme.py
+global-exclude __pycache__ *.py[cod]

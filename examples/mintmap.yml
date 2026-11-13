@@ -1,9 +1,10 @@
 # Copy to .github/workflows/mintmap.yml in your Django repository.
-# Before the first run: install MintMap (`pip install "git+https://github.com/mohamedmoatazsec/mintmap@v0.6.0a1"`;
-# PyPI release pending), run `mintmap init <project_dir>`, review the entries, record the review with
-# `mintmap accept <project_dir> --all --reviewer <you>`, and commit mintmap.lock.
-# Write the lock with Python 3.11, 3.12 or 3.13 (fingerprints are the same on these), or with the version set in
-# `python-version` below.
+# Before the first run: install MintMap (`pip install mintmap` in a virtualenv, or `pipx install mintmap`), run
+# `mintmap init <project_dir>`, review the entries, record the review with
+# `mintmap accept <project_dir> --all --reviewer <you>`, check that `mintmap diff <project_dir>` exits 0, and commit
+# mintmap.lock.
+# Write the lock with Python 3.11, 3.12 or 3.13 (fingerprints are the same on these), or with the Python the action
+# runs (its `python-version` input, default 3.12).
 name: mintmap
 on:
   pull_request:
@@ -13,11 +14,13 @@ jobs:
   mintmap:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       # Keep this job free of code from the pull request: do not install the project's dependencies or run its
       # tests here before MintMap (see docs/ENFORCEMENT.md, section 4). MintMap needs neither.
-      - uses: mohamedmoatazsec/mintmap@<full-commit-sha>   # pin to the full commit SHA of a MintMap release tag
+      # Pinned to the full commit SHA of the release (the tag is kept as a comment): a tag can be moved.
+      # git ls-remote https://github.com/mohamedmoatazsec/mintmap refs/tags/v0.6.0a2
+      - uses: mohamedmoatazsec/mintmap@030bf616d4553bb546efbcd08ade12040175a894 # v0.6.0a2
         with:
           project-dir: .

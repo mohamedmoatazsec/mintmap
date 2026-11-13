@@ -1,5 +1,12 @@
 # MintMap development log (internal)
 
+> **Archived.** This file was moved here from `docs/DEVELOPMENT_HISTORY.md` and is kept only as a record. You do not
+> need it to use MintMap. It is about 2,000 lines long, and its commands, paths and version numbers refer to the
+> prototype and to a private evaluation workspace, not to this repository. It was last updated before the round-4
+> evaluation, so where it says v6 "has not been evaluated on fresh projects", read
+> [EVALUATION.md](../EVALUATION.md) instead: that file has the current results. For how MintMap works today, start
+> with the [README](../../README.md) and [CONCEPTS.md](../CONCEPTS.md).
+
 > **This is the internal development log of the MintMap prototype**, published as a record of how the tool was
 > built and evaluated, including the failures. It is not user documentation. It was the prototype's working
 > README; its commands, file names and version numbers refer to the prototype (`mintmap.py`, `mintmap_core/`,
@@ -7,10 +14,10 @@
 > Names of harness runs (`v4`, `v5a`, `v5b`, `mut-hc-v2`, ...), reviewer fixtures (`e1..e11`, `mp1..mp11`) and
 > result files refer to a private evaluation workspace that is not published. Rounds 1 and 2 are described here in
 > detail; round 3 (the fresh held-out evaluation on InvenTree, Weblate and pretix) is only in
-> [EVALUATION.md](EVALUATION.md).
+> [EVALUATION.md](../EVALUATION.md).
 >
-> Current usage: [README.md](../README.md). Current results: [EVALUATION.md](EVALUATION.md). Review enforcement
-> and the GitHub Action: [ENFORCEMENT.md](ENFORCEMENT.md).
+> Current usage: [README.md](../../README.md). Current results: [EVALUATION.md](../EVALUATION.md). Review enforcement
+> and the GitHub Action: [ENFORCEMENT.md](../ENFORCEMENT.md).
 >
 > v6 (developed as 0.6.0.dev0, released as 0.6.0a1) was developed in the release package (`src/mintmap/`) and is summarised in the first section
 > below, in three parts (v6a, v6b, v6c); it has not been evaluated on fresh projects.
@@ -47,7 +54,7 @@ labels describe *what the analysed code shows*. They are not security verdicts.
 
 ## What changed in v6 (0.6.0.dev0, released as 0.6.0a1; held-out results in docs/EVALUATION.md, round 4)
 
-Round 3 (frozen v5 on InvenTree, Weblate, pretix; see [EVALUATION.md](EVALUATION.md)) missed 45 of 149 units with
+Round 3 (frozen v5 on InvenTree, Weblate, pretix; see [EVALUATION.md](../EVALUATION.md)) missed 45 of 149 units with
 no visible gap and 18 of 58 harmful mutations passed `diff`; v4 had the same silent rate on its own held-out set, so
 fixes tuned on development projects did not transfer. v6 therefore adds broad structural rules, above all a
 **candidate tier** that makes new shapes visible and diffable at low review cost, plus false-alarm reductions. Those
@@ -529,7 +536,7 @@ and `dj_rest_auth_legacy` included).
 
 ## What changed in v5 (part B: R3, R5, R7, R8)
 
-Part B addresses the remaining root causes of the round-2 evaluation report (summarised in [EVALUATION.md](EVALUATION.md)). Same development set and rules as part
+Part B addresses the remaining root causes of the round-2 evaluation report (summarised in [EVALUATION.md](../EVALUATION.md)). Same development set and rules as part
 A (see "Development constraints"); every rule is general and has synthetic fixture tests in `tests/test_v5b.py`
 (31 tests; 23 of them fail on frozen the frozen v4 copy, the other 8 are controls: changes that must stay
 detected, such as swapping two variables or a helper that the inliner must not inline).
@@ -679,7 +686,7 @@ the evidence of the new paths). Healthchecks: 32 paths (7 new heuristic paths, a
 
 ## What changed in v5 (part A: regression harness, held-out root causes R1, R2, R4, R6)
 
-Frozen v4 was evaluated on held-out projects (the round-2 evaluation report (summarised in [EVALUATION.md](EVALUATION.md))). Only 13 of 41 full-session
+Frozen v4 was evaluated on held-out projects (the round-2 evaluation report (summarised in [EVALUATION.md](../EVALUATION.md))). Only 13 of 41 full-session
 paths were linked exactly, 17 of 64 S/T/P units were missed with no visible gap, 8 of 18 should-flag code
 changes passed CI with exit 0, and harmless refactors raised false alarms 6 of 9 times. v5 part A fixes the
 "never silent" and project-model causes R1, R2, R4 and R6 of that report. paperless-ngx, netbox and plane were
@@ -1002,7 +1009,7 @@ a held-out evaluation. P4 (Zulip routing) and P5 (URL shadowing) are addressed b
 ## Commands (prototype)
 
 The prototype was run as `python3 -I mintmap.py <command> ...`; the package is run as `mintmap <command> ...` with
-the same commands and options (see [README.md](../README.md)). Tests: `python -I -m unittest discover -s tests -t tests`.
+the same commands and options (see [README.md](../../README.md)). Tests: `python -I -m unittest discover -s tests -t tests`.
 
 Common options: `--catalog PATH` (defaults to catalog v3; the v2 and v1 catalogs still
 load: without the v3 sections every unmapped library construct is a gap, and the v2-only overlay entries are
@@ -1703,7 +1710,7 @@ the first `diff` against a v1 lock can report many findings. Re-run `init` (or `
 * **Dependency lock files**, and library versions that are not pinned in
   `requirements*.txt` or `pyproject.toml`.
 * **GitHub enforcement** (CODEOWNERS, rulesets, required reviews, protected workflow). The prototype had none.
-  Release 0.5.0a1 adds a composite GitHub Action and the guidance in [ENFORCEMENT.md](ENFORCEMENT.md); the GitHub
+  Release 0.5.0a1 adds a composite GitHub Action and the guidance in [ENFORCEMENT.md](../ENFORCEMENT.md); the GitHub
   settings there are derived from GitHub's documentation and have not been tested on a live repository.
 * **v5 review-round limits (documented, not fixed):**
   * settings alternatives over-approximate: every leaf settings module that is not named as test settings is
@@ -1735,7 +1742,7 @@ the first `diff` against a v1 lock can report many findings. Re-run `init` (or `
 * **No held-out evaluation of v5 at the time of writing.** Frozen v4 was evaluated on paperless-ngx, netbox and
   plane (round 2); v5 was developed with those projects in view, so its numbers on them are development-set
   numbers. Frozen v5 was later evaluated on a fresh held-out set (InvenTree, Weblate, pretix: round 3, see
-  [EVALUATION.md](EVALUATION.md)); on those projects it missed 30% of credential units silently.
+  [EVALUATION.md](../EVALUATION.md)); on those projects it missed 30% of credential units silently.
 
 ## Known limitations (expected sources of false alarms and misses)
 
@@ -2039,5 +2046,5 @@ No inventory numbers from these runs should be read as accuracy figures.
 
 The prototype only proposed review enforcement (CODEOWNERS for the lock, the MintMap code, the catalog and the
 workflow; a ruleset requiring code-owner review and the MintMap check; a workflow the pull request cannot change).
-Release 0.5.0a1 replaces that proposal with [ENFORCEMENT.md](ENFORCEMENT.md) and a GitHub Action. None of it has been
+Release 0.5.0a1 replaces that proposal with [ENFORCEMENT.md](../ENFORCEMENT.md) and a GitHub Action. None of it has been
 tested on a live repository.

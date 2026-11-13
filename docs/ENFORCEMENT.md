@@ -59,6 +59,10 @@ A pull request does not need to touch the workflow to tamper with the check if c
   interpreter, by `actions/setup-python`), and the catalog is read from the action, not from the pull request. If
   you run MintMap yourself, do the same (`python -I`, MintMap installed or checked out outside the pull request's
   tree).
+- MintMap's output quotes text from the pull request (route strings, file names). `scan` and `diff` print each
+  item on one line with control characters escaped, and the action also pauses workflow commands
+  (`::stop-commands::` with a random token) while MintMap runs, so that text cannot write `::error::` or
+  `::add-mask::` lines into the log.
 - Do not run code from the pull request in the MintMap job before MintMap runs: no `pip install -r
   requirements.txt` or `pip install -e .`, no tests, no setup scripts from the repository. Installing packages can
   run code the pull request controls, and that code can modify the Python installation or the action's files. Run
