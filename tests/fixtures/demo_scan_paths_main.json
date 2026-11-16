@@ -1,0 +1,323 @@
+{
+  "candidates": [
+    {
+      "analysis_complete": true,
+      "candidate": {
+        "group": "password_set",
+        "keys": [
+          "member.set_password(form.cleaned_data['password'])"
+        ],
+        "rank": "medium",
+        "reason": "sets a password from a value it does not generate: member.set_password(form.cleaned_data['password'])",
+        "signals": []
+      },
+      "chain": [
+        "members.views.finish_reset"
+      ],
+      "chains_analyzed": 1,
+      "entry": {
+        "functions": [],
+        "gates": [],
+        "id": "candidate_site:members.views.finish_reset",
+        "kind": "candidate_site",
+        "notes": [
+          "candidate (password_set, medium): sets a password from a value it does not generate: member.set_password(form.cleaned_data['password']); reached from 1 routed entry point(s)"
+        ],
+        "reached_from": [
+          "route:members/reset/<uidb64>/<token>/|members.views.finish_reset"
+        ],
+        "route": null,
+        "view": "members.views.finish_reset"
+      },
+      "evidence": {
+        "checks": [
+          {
+            "catalog_ref": "django.contrib.auth.tokens.PasswordResetTokenGenerator.check_token",
+            "check": "django.contrib.auth.tokens.PasswordResetTokenGenerator.check_token",
+            "detail": "check is in a condition whose success is required to reach the mint (branch or early exit)",
+            "factor": "reset_token_possession",
+            "function": "members.views.finish_reset",
+            "line": 62,
+            "relation": "guards_mint",
+            "same_user": "not_applicable",
+            "via": "catalog"
+          }
+        ],
+        "context": [
+          "candidate (password_set, medium): sets a password from a value it does not generate: member.set_password(form.cleaned_data['password']); reached from 1 routed entry point(s)"
+        ],
+        "factors": {
+          "reset_token_possession": "guards_mint"
+        },
+        "hooks": [],
+        "shadowed_by": null,
+        "status": "check_guards_mint",
+        "status_if_reachable": null,
+        "unrecognized_checks": [],
+        "validation_methods": []
+      },
+      "fingerprint": {
+        "callee_functions": [],
+        "check_functions": [],
+        "components": {
+          "callees": "a0e321f902e770d05f37fabd",
+          "catalog": "93aa86d15eb925881b209660",
+          "checks": "a0e321f902e770d05f37fabd",
+          "code": "3297b1b5b221a93eba33591d",
+          "deps": "a0e321f902e770d05f37fabd",
+          "hooks": "a0e321f902e770d05f37fabd",
+          "settings": "a0e321f902e770d05f37fabd"
+        },
+        "fingerprint_depth": 4,
+        "hooks": [],
+        "overall": "6d0bddaf49c599d1e68f742e",
+        "path_functions": [
+          "members.views.finish_reset"
+        ],
+        "settings_dependencies": []
+      },
+      "fingerprint_complete": true,
+      "gaps": [],
+      "id": "cd678fdb9fe16dfa",
+      "mint": {
+        "api": "password_set[set_password]",
+        "catalog_ref": null,
+        "kind": "candidate",
+        "library_route": null,
+        "library_source": null,
+        "provided_by": "project_code",
+        "provided_via": null,
+        "purpose": "candidate_password_set",
+        "purpose_basis": "candidate: a password set from a value that is not generated (user- or administrator-chosen)",
+        "purpose_note": "sets a password from a value it does not generate: member.set_password(form.cleaned_data['password'])",
+        "site": {
+          "call": "member.set_password(form.cleaned_data['password'])",
+          "file": "members/views.py",
+          "function": "members.views.finish_reset",
+          "line": 66
+        }
+      },
+      "review": {
+        "group": "candidates:password_set",
+        "risk": "medium",
+        "score": 4,
+        "why": [
+          "sets a password from a value it does not generate: member.set_password(form.cleaned_data['password'])"
+        ]
+      },
+      "shadowed": false,
+      "tier": "candidate"
+    }
+  ],
+  "paths": [
+    {
+      "chain": [
+        "members.views.ApiTokenView.post"
+      ],
+      "entry_id": "route:members/api/token/|members.views.ApiTokenView",
+      "fingerprint": {
+        "callee_functions": [],
+        "check_functions": [],
+        "components": {
+          "callees": "e3b0c44298fc1c149afbf4c8",
+          "catalog": "b04c39815b0152ac86d80f4c",
+          "checks": "e3b0c44298fc1c149afbf4c8",
+          "code": "9c238f68a8f0020a4e6ca08e",
+          "deps": "e3b0c44298fc1c149afbf4c8",
+          "hooks": "e3b0c44298fc1c149afbf4c8",
+          "settings": "a530ec03ddb0f4f2e41ad90e"
+        },
+        "fingerprint_depth": 4,
+        "hooks": [],
+        "overall": "32d77c024a1651c9f5b45d68",
+        "path_functions": [
+          "members.views.ApiTokenView.post"
+        ],
+        "settings_dependencies": [
+          "group:AUTHENTICATION_BACKENDS"
+        ]
+      },
+      "gaps": [],
+      "id": "363c72388024ca9c"
+    },
+    {
+      "chain": [
+        "members.views.finish_reset"
+      ],
+      "entry_id": "route:members/reset/<uidb64>/<token>/|members.views.finish_reset",
+      "fingerprint": {
+        "callee_functions": [],
+        "check_functions": [],
+        "components": {
+          "callees": "e3b0c44298fc1c149afbf4c8",
+          "catalog": "1954b0e8159df9a58c0c39de",
+          "checks": "e3b0c44298fc1c149afbf4c8",
+          "code": "3690ed02b54c2ed7cb3b1b8c",
+          "deps": "e3b0c44298fc1c149afbf4c8",
+          "hooks": "e3b0c44298fc1c149afbf4c8",
+          "settings": "e3b0c44298fc1c149afbf4c8"
+        },
+        "fingerprint_depth": 4,
+        "hooks": [],
+        "overall": "a8e353262e5855cf8d3c502d",
+        "path_functions": [
+          "members.views.finish_reset"
+        ],
+        "settings_dependencies": []
+      },
+      "gaps": [],
+      "id": "1686eb3b06d009ce"
+    },
+    {
+      "chain": [
+        "members.views.sign_in_code"
+      ],
+      "entry_id": "route:members/sign-in/code/|members.views.sign_in_code",
+      "fingerprint": {
+        "callee_functions": [
+          "members.forms.CodeForm.__init__"
+        ],
+        "check_functions": [
+          "members.forms.CodeForm.clean_code"
+        ],
+        "components": {
+          "callees": "c817f9b13cc2970a3786ed30",
+          "catalog": "84b8faf5131dcf013261c27b",
+          "checks": "97b4f53b7d74e884b875a25e",
+          "code": "a0423052e8dbb56a9d1dba3d",
+          "deps": "e3b0c44298fc1c149afbf4c8",
+          "hooks": "e3b0c44298fc1c149afbf4c8",
+          "settings": "e3b0c44298fc1c149afbf4c8"
+        },
+        "fingerprint_depth": 4,
+        "hooks": [],
+        "overall": "aa15278dfb0c03c561972435",
+        "path_functions": [
+          "members.views.sign_in_code"
+        ],
+        "settings_dependencies": []
+      },
+      "gaps": [],
+      "id": "033339f757191ebb"
+    },
+    {
+      "chain": [
+        "members.views.sign_in"
+      ],
+      "entry_id": "route:members/sign-in/|members.views.sign_in",
+      "fingerprint": {
+        "callee_functions": [],
+        "check_functions": [],
+        "components": {
+          "callees": "e3b0c44298fc1c149afbf4c8",
+          "catalog": "2554a748e98c712a76f64512",
+          "checks": "e3b0c44298fc1c149afbf4c8",
+          "code": "27dc2e27aa84beb21fd85234",
+          "deps": "e3b0c44298fc1c149afbf4c8",
+          "hooks": "e3b0c44298fc1c149afbf4c8",
+          "settings": "a530ec03ddb0f4f2e41ad90e"
+        },
+        "fingerprint_depth": 4,
+        "hooks": [],
+        "overall": "51fa48467039e57fb9d68d20",
+        "path_functions": [
+          "members.views.sign_in"
+        ],
+        "settings_dependencies": [
+          "group:AUTHENTICATION_BACKENDS"
+        ]
+      },
+      "gaps": [],
+      "id": "1b7d4559cbfd2737"
+    },
+    {
+      "chain": [
+        "members.views.sign_in"
+      ],
+      "entry_id": "route:members/sign-in/|members.views.sign_in",
+      "fingerprint": {
+        "callee_functions": [],
+        "check_functions": [],
+        "components": {
+          "callees": "e3b0c44298fc1c149afbf4c8",
+          "catalog": "334eab15f164ac605267fc1f",
+          "checks": "e3b0c44298fc1c149afbf4c8",
+          "code": "27dc2e27aa84beb21fd85234",
+          "deps": "e3b0c44298fc1c149afbf4c8",
+          "hooks": "e3b0c44298fc1c149afbf4c8",
+          "settings": "a530ec03ddb0f4f2e41ad90e"
+        },
+        "fingerprint_depth": 4,
+        "hooks": [],
+        "overall": "7d400f3ebca201cf2387363e",
+        "path_functions": [
+          "members.views.sign_in"
+        ],
+        "settings_dependencies": [
+          "group:AUTHENTICATION_BACKENDS"
+        ]
+      },
+      "gaps": [],
+      "id": "95fc37508a619b3a"
+    }
+  ],
+  "routes": [
+    {
+      "conditional": false,
+      "decorators": [],
+      "file": "members/urls.py",
+      "kind": "project_class",
+      "line": 9,
+      "name": "api-token",
+      "pattern": "members/api/token/",
+      "target": "members.views.ApiTokenView",
+      "urlconf_chain": [
+        "teahouse.urls",
+        "members.urls"
+      ]
+    },
+    {
+      "conditional": false,
+      "decorators": [],
+      "file": "members/urls.py",
+      "kind": "project_function",
+      "line": 8,
+      "name": "finish-reset",
+      "pattern": "members/reset/<uidb64>/<token>/",
+      "target": "members.views.finish_reset",
+      "urlconf_chain": [
+        "teahouse.urls",
+        "members.urls"
+      ]
+    },
+    {
+      "conditional": false,
+      "decorators": [],
+      "file": "members/urls.py",
+      "kind": "project_function",
+      "line": 6,
+      "name": "sign-in",
+      "pattern": "members/sign-in/",
+      "target": "members.views.sign_in",
+      "urlconf_chain": [
+        "teahouse.urls",
+        "members.urls"
+      ]
+    },
+    {
+      "conditional": false,
+      "decorators": [],
+      "file": "members/urls.py",
+      "kind": "project_function",
+      "line": 7,
+      "name": "sign-in-code",
+      "pattern": "members/sign-in/code/",
+      "target": "members.views.sign_in_code",
+      "urlconf_chain": [
+        "teahouse.urls",
+        "members.urls"
+      ]
+    }
+  ],
+  "source": "upstream main (e8c7600), mintmap scan examples/demo --json"
+}

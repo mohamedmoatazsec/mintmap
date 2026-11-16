@@ -770,9 +770,9 @@
     },
     {
       "fingerprint": {
-        "overall": "20d575e2b4018d8fa8e69bbe",
+        "overall": "1e353b0eaf3ecb601c753e35",
         "settings": {
-          "PASSWORD_RESET_TIMEOUT": "bb392b6cb44be41757d2d620"
+          "PASSWORD_RESET_TIMEOUT": "dd3f753ab7bae426e2548c85"
         },
         "sources": {}
       },
@@ -782,10 +782,15 @@
         "PASSWORD_RESET_TIMEOUT"
       ],
       "policy_note": "Baseline of the demo project",
+      "previous_review": {
+        "policy_note": "Baseline of the demo project",
+        "review_status": "accepted",
+        "reviewer": "demo-reviewer"
+      },
       "review_status": "accepted",
       "reviewer": "demo-reviewer",
       "values": {
-        "PASSWORD_RESET_TIMEOUT": "<dynamic 60 * 60>"
+        "PASSWORD_RESET_TIMEOUT": "3600"
       }
     }
   ],
@@ -823,7 +828,7 @@
     "overlay_entries_skipped": [],
     "overlay_sha256": "9caad4611e05cfc9",
     "python": "3.13",
-    "version": "0.6.0a1"
+    "version": "0.6.0a2"
   },
   "watched": []
 }
